@@ -1,0 +1,27 @@
+extern u64 compressBound(u64);
+extern i32 compress2(ptr, ptr, ptr, u64, i32);
+extern i32 uncompress(ptr, ptr, ptr, u64);
+extern i64 cpp_find(ptr, ptr);
+extern void memcpy(ptr, ptr, u64);
+extern ptr malloc(u64);
+extern void free(ptr);
+void main() {
+    u64 srcLen = 24;
+    ptr src = malloc(srcLen);
+    memcpy(src, "hello world hello world", 24);  // 含 NUL
+    u64 bound = compressBound(srcLen);
+    ptr dst = malloc(bound);
+    u64 dstLen = bound;
+    i32 rc = compress2(dst, &dstLen, src, srcLen, 9);
+    print(rc);
+    print(dstLen);
+    ptr out = malloc(srcLen);
+    u64 outLen = srcLen;
+    i32 rc2 = uncompress(out, &outLen, dst, dstLen);
+    print(rc2);
+    print(outLen);
+    print(cpp_find(out, "world"));
+    free(src);
+    free(dst);
+    free(out);
+}
