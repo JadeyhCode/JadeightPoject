@@ -1,4 +1,4 @@
-mymul_int:i32(i32,i32)
+add3i:i32(i32,i32,i32)
 malloc:ptr(u64)
 free:void(ptr)
 memcpy:void(ptr,ptr,u64)

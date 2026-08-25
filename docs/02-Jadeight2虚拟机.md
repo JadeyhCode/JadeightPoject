@@ -71,6 +71,9 @@ Jadeight2 是 Jadeight 生态的核心字节码虚拟机：一个用 C++20 实�
 
 - `SCOPE_PUSH`：把当前 `stackPtr` 记入作用域栈并深度 +1；`SCOPE_POP`：深度 -1 并把 `stackPtr` 恢复为 `scope[depth]`（**无越界检查**，下溢由调用方保证）。
 - 所有带 `off` 的寻址都相对 `SCOPE_BASE = zuoYongYvStackPtr[zuoYongYv - 1]` 计算（即"当前作用域基址"）。JIT 版语义一致（`scope[depth-1]`）。
+- **动态扩容（v2 补丁）**：`SCOPE_PUSH` 与 `NEW_STACK` 在原容量不足时自动扩容（仅对解释器
+  `STACK_INIT` 自有的分配生效，JIT 路径不受影响），修复深递归时作用域栈/数据栈越界写导致的
+  堆损坏（"corrupted size vs. prev_size"）。
 
 **堆（分配器无类型，只认 size 和 where）**
 
