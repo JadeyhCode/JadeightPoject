@@ -280,7 +280,12 @@ j8run <main.bc> [--externs manifest.txt] [--lib lib.so]
 - **上游格式约定**：`.bc` 的文件布局（LE 头 `argSize/retSize/entry` + 大端操作数字节码）由汇编层定义，与本 VM `FunctionSave::loadFromFile/saveToFile` 兼容 —— 详见 `03-汇编器与字节码格式.md`。
 - **下游入口**：`j8run` 复用本文件描述的 VM 实现来运行 .bc；`05-JadeightPoject启动器.md` 把"找 VM → 跑 .bc"串成最后一公里。
 - 本文件（`02-Jadeight2虚拟机.md`）是 `01-总体架构.md` 的第二节，聚焦指令集、内存模型、调用约定与 .bc 格式本身。
+## AI 使用情况声明
 
----
+| 使用环节 | AI 工具 | 使用方式 | 人工核验 |
+|---|---|---|---|
+| 架构设计 | 未使用 AI | 字节码格式、opcode 编码方案、VM 执行模型都是人类原创设计 | — |
+| 核心算法 | 未使用 AI | 类型全展开编译策略、FFI via libffi 的调用约定是人类的原创 | — |
+| 代码编写 | Deepseek-V4-Flash | 帮忙补了指令分发的样板代码、动态扩容之类的补丁 | 生成完人逐行看过、测过（堆越界那类 bug 就是这么抓出来的） |
+| 文档撰写 | Deepseek-V4-Flash | 初稿是 AI 写的 | 技术语义部分人重写了一遍，跟实现对齐了 |
 
-> **代码归属说明**：架构与指令由人类设计，部分代码由 AI 生成，AI 生成的代码由人工审核。
