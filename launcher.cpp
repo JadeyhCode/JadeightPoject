@@ -1,7 +1,9 @@
 // JadeightRunner — 跨平台 Jadeight 字节码启动器（单 exe）
 // 行为：
-//   1) 自动寻找 Jadeight 虚拟机（环境变量 JADEIGHT_VM 优先，其次常见路径，最后 PATH）
-//   2) 运行当前目录 byteCode/ 下的所有 .bc（可用 JADEIGHT_BC_DIR 覆盖目录）
+//   1) 自动寻找 Jadeight 虚拟机（JADEIGHT_VM 优先 → 常见路径 → PATH）
+//   2) 运行当前目录 byteCode/ 下的所有 .bc（JADEIGHT_BC_DIR 覆盖）
+//   3) 动态链接 lib/ 下的共享库（.so/.dylib/.dll）传给 VM（EXTERN_CALL 外部函数）；
+//      若存在 lib/externs.txt（或 JADEIGHT_EXTERNS 指定），一并传给 VM 作为外部函数清单
 // 平台适配：宏 __APPLE__ / __linux__ / _WIN32
 #include <cstdio>
 #include <cstdlib>
@@ -93,8 +95,25 @@ static std::string findVM(const std::string& exeDir, const std::string& cwd) {
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
-static int runOne(const std::string& vm, const std::string& bc) {
-    return std::system((quote(vm) + " " + quote(bc)).c_str());
+// 收集 lib/ 下的共享库（.so / .dylib / .dll）
+static std::vector<std::string> collectLibs(const std::string& dir) {
+    std::vector<std::string> v;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return v;
+    for (auto& it : fs::directory_iterator(dir, ec)) {
+        std::string ext = it.path().extension().string();
+        if (ext == ".so" || ext == ".dylib" || ext == ".dll") v.push_back(it.path().string());
+    }
+    std::sort(v.begin(), v.end());
+    return v;
+}
+
+static int runOne(const std::string& vm, const std::string& bc,
+                  const std::string& externs, const std::vector<std::string>& libs) {
+    std::string cmd = quote(vm) + " " + quote(bc);
+    if (!externs.empty()) cmd += " --externs " + quote(externs);
+    for (auto& l : libs) cmd += " --lib " + quote(l);
+    return std::system(cmd.c_str());
 }
 
 int main(int argc, char** argv) {
@@ -103,6 +122,8 @@ int main(int argc, char** argv) {
     std::string cwd = fs::current_path().string();
     std::string bcDir = cwd + PATH_SEP_S + "byteCode";
     if (const char* e = std::getenv("JADEIGHT_BC_DIR")) if (*e) bcDir = e;
+    std::string libDir = cwd + PATH_SEP_S + "lib";
+    if (const char* e = std::getenv("JADEIGHT_LIB_DIR")) if (*e) libDir = e;
 
     std::string vm = findVM(exeDir, cwd);
     if (vm.empty()) {
@@ -111,6 +132,23 @@ int main(int argc, char** argv) {
         return 2;
     }
     printf("Jadeight VM: %s\n", vm.c_str());
+
+    // 外部函数清单：JADEIGHT_EXTERNS 优先，其次 lib/externs.txt
+    std::string externs;
+    if (const char* e = std::getenv("JADEIGHT_EXTERNS")) if (*e) externs = e;
+    if (externs.empty()) {
+        std::string f = libDir + PATH_SEP_S + "externs.txt";
+        std::error_code ec;
+        if (fs::is_regular_file(f, ec)) externs = f;
+    }
+
+    // 动态链接 lib/ 下的共享库
+    std::vector<std::string> libs = collectLibs(libDir);
+    if (!libs.empty()) {
+        printf("动态链接库 (%s):\n", libDir.c_str());
+        for (auto& l : libs) printf("  %s\n", l.c_str());
+    }
+    if (!externs.empty()) printf("外部函数清单: %s\n", externs.c_str());
 
     std::error_code ec;
     if (!fs::is_directory(bcDir, ec)) {
@@ -131,7 +169,7 @@ int main(int argc, char** argv) {
     int failed = 0;
     for (auto& f : files) {
         printf("\n===== 运行 %s =====\n", f.filename().string().c_str());
-        int rc = runOne(vm, f.string());
+        int rc = runOne(vm, f.string(), externs, libs);
         if (rc != 0) {
             fprintf(stderr, "!! %s 失败 (exit %d)\n", f.filename().string().c_str(), rc);
             failed = 1;

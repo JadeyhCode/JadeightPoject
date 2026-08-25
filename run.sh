@@ -5,6 +5,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BC_DIR="${JADEIGHT_BC_DIR:-$PWD/byteCode}"
+LIB_DIR="${JADEIGHT_LIB_DIR:-$PWD/lib}"
 
 find_vm() {
     # 1) 环境变量
@@ -42,6 +43,31 @@ echo "Jadeight VM: $VM"
 
 [ -d "$BC_DIR" ] || { echo "错误：找不到字节码目录：$BC_DIR" >&2; exit 3; }
 
+# 外部函数清单：JADEIGHT_EXTERNS 优先，其次 lib/externs.txt
+externs_args=()
+if [ -n "${JADEIGHT_EXTERNS:-}" ] && [ -f "$JADEIGHT_EXTERNS" ]; then
+    externs_args=(--externs "$JADEIGHT_EXTERNS")
+elif [ -f "$LIB_DIR/externs.txt" ]; then
+    externs_args=(--externs "$LIB_DIR/externs.txt")
+fi
+
+# 动态链接 lib/ 下的共享库（.so / .dylib / .dll）
+lib_args=()
+lib_found=0
+for f in "$LIB_DIR"/*.so "$LIB_DIR"/*.dylib "$LIB_DIR"/*.dll; do
+    if [ -f "$f" ]; then
+        lib_args+=(--lib "$f")
+        lib_found=1
+    fi
+done
+if [ "$lib_found" -eq 1 ]; then
+    echo "动态链接库 ($LIB_DIR):"
+    for f in "$LIB_DIR"/*.so "$LIB_DIR"/*.dylib "$LIB_DIR"/*.dll; do
+        [ -f "$f" ] && echo "  $f"
+    done
+fi
+[ "${#externs_args[@]}" -gt 0 ] && echo "外部函数清单: ${externs_args[1]}"
+
 failed=0
 count=0
 for bc in "$BC_DIR"/*.bc; do
@@ -49,7 +75,7 @@ for bc in "$BC_DIR"/*.bc; do
     count=$((count + 1))
     echo
     echo "===== 运行 $(basename "$bc") ====="
-    if ! "$VM" "$bc"; then
+    if ! "$VM" "$bc" "${externs_args[@]}" "${lib_args[@]}"; then
         echo "!! $(basename "$bc") 失败 (exit $?)" >&2
         failed=1
     fi

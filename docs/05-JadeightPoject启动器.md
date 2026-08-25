@@ -1,6 +1,7 @@
 # JadeightPoject 启动器
 
-自动寻找 Jadeight 虚拟机，运行当前目录 `byteCode/` 下的所有 `.bc` 字节码。
+自动寻找 Jadeight 虚拟机，运行当前目录 `byteCode/` 下的所有 `.bc` 字节码，
+并**动态链接 `lib/` 目录下的共享库**（供字节码里的 `EXTERN_CALL` 外部函数使用）。
 本工程是 Jadeight 生态的「最后一公里」：编译产物（.bc）由它一键跑起来。
 
 ## 文件
@@ -10,7 +11,8 @@
 | `launcher.cpp` | 跨平台启动器源码（宏适配 Mac / Linux / Windows），编译为单个 exe |
 | `build.sh` | 编译 `launcher.cpp` → 单可执行文件 `JadeightRunner`（零依赖） |
 | `run.sh` | Linux 启动脚本（与 launcher 行为一致） |
-| `byteCode/` | 字节码目录（示例含 t1_basic.bc、t3_functions.bc） |
+| `byteCode/` | 字节码目录（示例含 extern_test.bc 等） |
+| `lib/` | 动态库目录（示例含 libextint.so、externs.txt） |
 
 ## 使用
 
@@ -46,6 +48,24 @@
 
 - `JADEIGHT_VM` — 指定虚拟机路径，如 `JADEIGHT_VM=/opt/jadeight/jadeight_vm ./run.sh`
 - `JADEIGHT_BC_DIR` — 指定字节码目录（默认 `$PWD/byteCode`）
+- `JADEIGHT_LIB_DIR` — 指定动态库目录（默认 `$PWD/lib`）
+- `JADEIGHT_EXTERNS` — 指定外部函数清单（默认取 `lib/externs.txt`）
+
+## 动态链接 lib/ 下的库
+
+启动器把 `lib/` 下的 `.so`（Linux）、`.dylib`（Mac）、`.dll`（Windows）全部收集，
+以 `--lib` 传给 VM 运行器（j8run），并把 `lib/externs.txt`（j8c `-emit-externs` 生成的
+外部函数签名清单）以 `--externs` 传入，供 `EXTERN_CALL` 经 libffi 调用 C 函数。
+
+```bash
+# 生成外部函数清单（j8c）并放入 lib/
+../JadeightCompiler/build/j8c -O0 -emit-externs lib/externs.txt -o byteCode/demo.bc demo.j8
+gcc -shared -fPIC -O2 mylib.c -o lib/libmylib.so   # 动态库放入 lib/
+./run.sh
+```
+
+示例：`byteCode/extern_test.bc` + `lib/libextint.so` + `lib/externs.txt`
+（调用 C 函数 `mymul_int`，输出 42 与 500）。
 
 ## 快速上手（全链路）
 
