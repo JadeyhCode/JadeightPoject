@@ -1,9 +1,11 @@
-# ffi-test — FFI 调用 C++ 标准库与外部库示例
+# ffi-test — FFI 调用 C++/外部库示例
 
-验证 Jadeight 字节码经 EXTERN_CALL（libffi）调用外部 C/C++ 代码：
+验证 Jadeight 字节码经 EXTERN_CALL（libffi）调用外部 C/C++ 代码。
 
-- `cppshim.cpp` — C++ 标准库的 extern "C" 薄封装（std::string/std::map/std::sort/std::cmath）
-- `zr3.j8` — zlib compress2/uncompress 完整往返 + 数据校验（malloc/memcpy/free + &局部变量）
+## 文件
+
+- `cppshim.cpp` — C++ `extern "C"` 薄封装：`cpp_find`（std::string::find，用于校验解压数据完整性）
+- `zr3.j8` — zlib `compress2`/`uncompress` 完整往返 + 数据校验（malloc/memcpy/free + `&局部变量`）
 
 ## 运行
 
@@ -15,4 +17,9 @@ g++ -shared -fPIC -O2 -std=c++20 cppshim.cpp -o libcppshim.so
 # 期望: rc=0 dstLen=23 rc2=0 outLen=24 cpp_find(world)=6
 ```
 
-其他已验证：libm 直调（sqrt/pow/floor/fabs/sin/cos）、compressBound。
+## 历史验证记录（当时全部通过，shim 已精简）
+
+- C++ 标准库（std::string/std::map/std::sort/std::cmath 封装）输出全对
+- libm 直调（sqrt/pow/floor/fabs/sin/cos）
+- zlib compressBound(100)=113、compress2/uncompress 往返 + 数据校验
+- 相关 extern 缺陷修复见 docs/04 的修复历史
