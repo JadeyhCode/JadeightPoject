@@ -9,3 +9,4 @@ ffi-test/*.dylib
 ffi-test/*.dll
 ffi-test/*.bc
 ffi-test/*.txt
+.idea/
