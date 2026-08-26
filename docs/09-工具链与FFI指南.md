@@ -571,3 +571,24 @@ cp demo.bc byteCode/ && cp libmylib.so lib/ && cp externs.txt lib/
 - VM 机制（EXTERN_CALL/libffi、内存模型、调用约定）：[02-Jadeight2虚拟机.md](02-Jadeight2虚拟机.md) 与 [08-VM机制与字节码格式.md](08-VM机制与字节码格式.md)
 - 启动器：[05-JadeightPoject启动器.md](05-JadeightPoject启动器.md)
 - .j8 语言完整手册：[07-语言参考.md](07-语言参考.md)
+
+## 10. 运行时动态链接（dlopen / dl_reg / dl_call）
+
+启动时 `--lib` 预加载是静态路径；要**运行期加载任意第三方库并调用**，用三条指令闭环：
+
+```c
+extern ptr dlopen(ptr, i32);   // libc 的 dlopen（RTLD_NOW=2）
+extern ptr dlsym(ptr, ptr);    // libc 的 dlsym
+void main() {
+    ptr h  = dlopen("./libfoo.so", 2);        // 1) 运行期加载库
+    ptr f  = dlsym(h, "my_func");             // 2) 解析符号 → 函数指针
+    u32 id = dl_reg(f, "i32(i32,i32)");       // 3) DL_REG：按签名注册进 externFn 表 → 索引
+    i32 r  = dl_call(id, "i32(i32,i32)", 1, 2); // 4) DL_CALL：按运行时索引调用
+}
+```
+
+- **签名串格式**：`返回类型(参数类型,...)`，类型名 `u8/i8/u16/i16/u32/i32/u64/i64/f32/f64/ptr/void`（.j8 侧无 f32，用 f64）
+- `dl_call` 的签名串在**编译期**决定参数/返回值布局（编译器解析字面量）；`dl_reg` 的签名串在**运行期**由 VM 解析生成 ffi_cif——两处必须一致
+- 已注册索引可复用：同一函数只需 dl_reg 一次，dl_call 多次
+- 实测：运行期 dlopen 加载 .so，dlsym 取 tp_add/tp_mul/tp_echo/tp_neg，dl_call 返回 42 / 7.000 / 123456789 / -7 全对
+- 配套：GET_SYSTEM 指令（175）可在字节码内判断平台后选择加载哪套库
