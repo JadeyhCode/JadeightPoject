@@ -1,0 +1,11 @@
+# 构建产物（均可再生成，不入库）
+JadeightRunner
+build/
+*.o
+byteCode/
+lib/
+ffi-test/*.so
+ffi-test/*.dylib
+ffi-test/*.dll
+ffi-test/*.bc
+ffi-test/*.txt
