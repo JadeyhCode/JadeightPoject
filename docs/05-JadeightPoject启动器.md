@@ -71,7 +71,7 @@ gcc -shared -fPIC -O2 mylib.c -o lib/libmylib.so   # 动态库放入 lib/
 
 ```bash
 # 1) 编译 .j8 → .bc
-../JadeightCompiler/build/j8c -O0 -o byteCode/demo.bc ../JadeightCompiler/examples/t1_basic.j8
+../JadeightCompiler/build/j8c -O0 -o byteCode/demo.bc ../JadeightCompiler/tests/t3_functions.j8
 
 # 2) 运行
 ./run.sh            # Linux
