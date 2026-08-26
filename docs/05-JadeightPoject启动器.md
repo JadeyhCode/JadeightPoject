@@ -53,9 +53,13 @@
 
 ## 动态链接 lib/ 下的库
 
-启动器把 `lib/` 下的 `.so`（Linux）、`.dylib`（Mac）、`.dll`（Windows）全部收集，
-以 `--lib` 传给 VM 运行器（j8run），并把 `lib/externs.txt`（j8c `-emit-externs` 生成的
-外部函数签名清单）以 `--externs` 传入，供 `EXTERN_CALL` 经 libffi 调用 C 函数。
+启动器收集 `lib/` 下的共享库，以 `--lib` 传给 VM 运行器（j8run），并把
+`lib/externs.txt`（j8c `-emit-externs` 生成的外部函数签名清单）以 `--externs` 传入，
+供 `EXTERN_CALL` 经 libffi 调用 C 函数。
+
+**按平台自动选择扩展名**：优先链接本平台的原生扩展名——Linux=`.so`、macOS=`.dylib`、
+Windows=`.dll`（launcher.cpp 用编译期宏判断，run.sh 用 `uname -s`）；若 `lib/` 中没有
+原生扩展名的库，则退回其他扩展名（跨平台目录兜底）。
 
 ```bash
 # 生成外部函数清单（j8c）并放入 lib/

@@ -51,20 +51,23 @@ elif [ -f "$LIB_DIR/externs.txt" ]; then
     externs_args=(--externs "$LIB_DIR/externs.txt")
 fi
 
-# 动态链接 lib/ 下的共享库（.so / .dylib / .dll）
+# 动态链接 lib/ 下的共享库：优先本平台原生扩展名（Linux=.so / macOS=.dylib / Windows=.dll）
+case "$(uname -s)" in
+  Darwin*) NATIVE_EXT=".dylib" ;;
+  MINGW*|MSYS*|CYGWIN*) NATIVE_EXT=".dll" ;;
+  *) NATIVE_EXT=".so" ;;
+esac
+lib_paths=()
+pick_ext() { for f in "$LIB_DIR"/*"$1"; do [ -f "$f" ] && lib_paths+=("$f"); done; }
+pick_ext "$NATIVE_EXT"
+if [ ${#lib_paths[@]} -eq 0 ]; then
+    for ext in .so .dylib .dll; do pick_ext "$ext"; done
+fi
 lib_args=()
-lib_found=0
-for f in "$LIB_DIR"/*.so "$LIB_DIR"/*.dylib "$LIB_DIR"/*.dll; do
-    if [ -f "$f" ]; then
-        lib_args+=(--lib "$f")
-        lib_found=1
-    fi
-done
-if [ "$lib_found" -eq 1 ]; then
+for p in "${lib_paths[@]}"; do lib_args+=(--lib "$p"); done
+if [ ${#lib_paths[@]} -gt 0 ]; then
     echo "动态链接库 ($LIB_DIR):"
-    for f in "$LIB_DIR"/*.so "$LIB_DIR"/*.dylib "$LIB_DIR"/*.dll; do
-        [ -f "$f" ] && echo "  $f"
-    done
+    for p in "${lib_paths[@]}"; do echo "  $p"; done
 fi
 [ "${#externs_args[@]}" -gt 0 ] && echo "外部函数清单: ${externs_args[1]}"
 

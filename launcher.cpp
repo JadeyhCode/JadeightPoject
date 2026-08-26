@@ -24,6 +24,15 @@ namespace fs = std::filesystem;
 #define EXE_SUFFIX ""
 #endif
 
+// 平台原生共享库扩展名（Windows=.dll / macOS=.dylib / 其他=.so）
+#if defined(_WIN32)
+#define NATIVE_LIB_EXT ".dll"
+#elif defined(__APPLE__)
+#define NATIVE_LIB_EXT ".dylib"
+#else
+#define NATIVE_LIB_EXT ".so"
+#endif
+
 static std::string dirOf(const std::string& p) {
     fs::path pp(p);
     return pp.has_parent_path() ? pp.parent_path().string() : std::string(".");
@@ -95,15 +104,19 @@ static std::string findVM(const std::string& exeDir, const std::string& cwd) {
 
 static std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
-// 收集 lib/ 下的共享库（.so / .dylib / .dll）
+// 收集 lib/ 下的共享库：优先本平台原生扩展名；无原生库时退回其他扩展名（跨平台目录兜底）
 static std::vector<std::string> collectLibs(const std::string& dir) {
-    std::vector<std::string> v;
+    std::vector<std::string> v, fallback;
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return v;
     for (auto& it : fs::directory_iterator(dir, ec)) {
         std::string ext = it.path().extension().string();
-        if (ext == ".so" || ext == ".dylib" || ext == ".dll") v.push_back(it.path().string());
+        if (ext == ".so" || ext == ".dylib" || ext == ".dll") {
+            if (ext == NATIVE_LIB_EXT) v.push_back(it.path().string());
+            else fallback.push_back(it.path().string());
+        }
     }
+    if (v.empty()) v = std::move(fallback);
     std::sort(v.begin(), v.end());
     return v;
 }
