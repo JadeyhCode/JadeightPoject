@@ -44,30 +44,12 @@ echo "Jadeight VM: $VM"
 [ -d "$BC_DIR" ] || { echo "错误：找不到字节码目录：$BC_DIR" >&2; exit 3; }
 
 # 外部函数清单：JADEIGHT_EXTERNS 优先，其次 lib/externs.txt
+# （动态库不再由启动器预加载——字节码用 dload/dlopen 在运行期自己加载 lib/ 下的库）
 externs_args=()
 if [ -n "${JADEIGHT_EXTERNS:-}" ] && [ -f "$JADEIGHT_EXTERNS" ]; then
     externs_args=(--externs "$JADEIGHT_EXTERNS")
 elif [ -f "$LIB_DIR/externs.txt" ]; then
     externs_args=(--externs "$LIB_DIR/externs.txt")
-fi
-
-# 动态链接 lib/ 下的共享库：优先本平台原生扩展名（Linux=.so / macOS=.dylib / Windows=.dll）
-case "$(uname -s)" in
-  Darwin*) NATIVE_EXT=".dylib" ;;
-  MINGW*|MSYS*|CYGWIN*) NATIVE_EXT=".dll" ;;
-  *) NATIVE_EXT=".so" ;;
-esac
-lib_paths=()
-pick_ext() { for f in "$LIB_DIR"/*"$1"; do [ -f "$f" ] && lib_paths+=("$f"); done; }
-pick_ext "$NATIVE_EXT"
-if [ ${#lib_paths[@]} -eq 0 ]; then
-    for ext in .so .dylib .dll; do pick_ext "$ext"; done
-fi
-lib_args=()
-for p in "${lib_paths[@]}"; do lib_args+=(--lib "$p"); done
-if [ ${#lib_paths[@]} -gt 0 ]; then
-    echo "动态链接库 ($LIB_DIR):"
-    for p in "${lib_paths[@]}"; do echo "  $p"; done
 fi
 [ "${#externs_args[@]}" -gt 0 ] && echo "外部函数清单: ${externs_args[1]}"
 
@@ -78,7 +60,7 @@ for bc in "$BC_DIR"/*.bc; do
     count=$((count + 1))
     echo
     echo "===== 运行 $(basename "$bc") ====="
-    if ! "$VM" "$bc" "${externs_args[@]}" "${lib_args[@]}"; then
+    if ! "$VM" "$bc" "${externs_args[@]}"; then
         echo "!! $(basename "$bc") 失败 (exit $?)" >&2
         failed=1
     fi

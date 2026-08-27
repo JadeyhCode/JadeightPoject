@@ -577,15 +577,15 @@ cp demo.bc byteCode/ && cp libmylib.so lib/ && cp externs.txt lib/
 启动时 `--lib` 预加载是静态路径；要**运行期加载任意第三方库并调用**，用三条指令闭环：
 
 ```c
-extern ptr dlopen(ptr, i32);   // libc 的 dlopen（RTLD_NOW=2）
-extern ptr dlsym(ptr, ptr);    // libc 的 dlsym
 void main() {
-    ptr h  = dlopen("./libfoo.so", 2);        // 1) 运行期加载库
+    ptr h  = dload("libfoo.so");              // 1) 加载 lib/ 下的库（= dlopen("lib/libfoo.so",2)）
     ptr f  = dlsym(h, "my_func");             // 2) 解析符号 → 函数指针
     u32 id = dl_reg(f, "i32(i32,i32)");       // 3) DL_REG：按签名注册进 externFn 表 → 索引
     i32 r  = dl_call(id, "i32(i32,i32)", 1, 2); // 4) DL_CALL：按运行时索引调用
 }
 ```
+- `dload`/`dlopen`/`dlsym` 均为**自动 extern**（j8c 自动注册、j8run 从 libc 解析），无需手写 extern 声明；动态库默认根目录 = `lib/`（`dload` 编译期拼接前缀）
+- 启动器不再 `--lib` 预加载，也不要求库在启动时存在——运行期按需加载
 
 - **签名串格式**：`返回类型(参数类型,...)`，类型名 `u8/i8/u16/i16/u32/i32/u64/i64/f32/f64/ptr/void`（.j8 侧无 f32，用 f64）
 - `dl_call` 的签名串在**编译期**决定参数/返回值布局（编译器解析字面量）；`dl_reg` 的签名串在**运行期**由 VM 解析生成 ffi_cif——两处必须一致

@@ -48,18 +48,15 @@
 
 - `JADEIGHT_VM` — 指定虚拟机路径，如 `JADEIGHT_VM=/opt/jadeight/jadeight_vm ./run.sh`
 - `JADEIGHT_BC_DIR` — 指定字节码目录（默认 `$PWD/byteCode`）
-- `JADEIGHT_LIB_DIR` — 指定动态库目录（默认 `$PWD/lib`）
 - `JADEIGHT_EXTERNS` — 指定外部函数清单（默认取 `lib/externs.txt`）
 
-## 动态链接 lib/ 下的库
+## 动态链接（字节码自行加载 lib/）
 
-启动器收集 `lib/` 下的共享库，以 `--lib` 传给 VM 运行器（j8run），并把
-`lib/externs.txt`（j8c `-emit-externs` 生成的外部函数签名清单）以 `--externs` 传入，
-供 `EXTERN_CALL` 经 libffi 调用 C 函数。
-
-**按平台自动选择扩展名**：优先链接本平台的原生扩展名——Linux=`.so`、macOS=`.dylib`、
-Windows=`.dll`（launcher.cpp 用编译期宏判断，run.sh 用 `uname -s`）；若 `lib/` 中没有
-原生扩展名的库，则退回其他扩展名（跨平台目录兜底）。
+启动器**不再预加载动态库**——VM 有了 `DL_REG`/`DL_CALL` 运行时动态链接指令后，
+字节码用 `dload("x.so")`（= `dlopen("lib/x.so", 2)`，**默认根目录即 `lib/`**）在运行期
+自己加载第三方库，配合 `dlsym`/`dl_reg`/`dl_call` 完成 加载→解析→调用 闭环（见 09 文档）。
+启动器只负责把 `lib/externs.txt`（j8c `-emit-externs` 生成的外部函数签名清单）以
+`--externs` 传给 VM，供 `EXTERN_CALL`/`dl_reg` 注册外部函数。
 
 ```bash
 # 生成外部函数清单（j8c）并放入 lib/

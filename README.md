@@ -3,7 +3,7 @@
 Jadeight 生态（虚拟机 + 汇编层 + 编译器 + 启动器）的文档与启动器工程。
 
 - **启动器**：`./run.sh`（Linux）或 `./build.sh && ./JadeightRunner`（单 exe），
-  自动寻找 Jadeight 虚拟机、运行当前目录 `byteCode/*.bc`、动态链接 `lib/*.so`（.dylib/.dll）。
+  自动寻找 Jadeight 虚拟机、运行当前目录 `byteCode/*.bc`（动态库由字节码用 `dload()` 在运行期自行加载 `lib/`）。
   详见 [docs/05-JadeightPoject启动器.md](docs/05-JadeightPoject启动器.md)。
 
 ## 完整文档（docs/）
