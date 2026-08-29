@@ -3,5 +3,4 @@ project(JadeightPoject)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(JadeightPoject launcher.cpp
-        launcher.cpp)
+add_executable(JadeightPoject launcher.cpp)

@@ -9,10 +9,10 @@
 | 文件 | 说明 |
 |---|---|
 | `launcher.cpp` | 跨平台启动器源码（宏适配 Mac / Linux / Windows），编译为单个 exe |
-| `build.sh` | 编译 `launcher.cpp` → 单可执行文件 `JadeightRunner`（零依赖） |
-| `run.sh` | Linux 启动脚本（与 launcher 行为一致） |
-| `byteCode/` | 字节码目录（示例含 extern_test.bc 等） |
-| `lib/` | 动态库目录（示例含 libextint.so、externs.txt） |
+| `build.sh` | 编译 `launcher.cpp` → 单可执行文件 `JadeightRunner`（零依赖，`--debug` 出调试版） |
+| `run.sh` | Linux 启动脚本（与 launcher 行为一致，参数相同） |
+| `byteCode/` | 字节码目录（示例含 t1_basic.bc、dl_test.bc 等） |
+| `lib/` | 动态库目录（示例含 tp.so、deep.so、externs.txt） |
 
 ## 使用
 
@@ -28,6 +28,25 @@
 行为：打印找到的 VM 路径 → 依次运行 `./byteCode/*.bc`（按文件名排序）→
 任一 .bc 运行失败则整体退出码非 0。
 
+### 命令行选项（run.sh 与 JadeightRunner 相同）
+
+| 选项 | 说明 |
+|---|---|
+| `[文件.bc ...]` | 不带参数跑 byteCode/ 下全部；带文件名只跑指定的（相对路径按 byteCode/ 解析） |
+| `--vm PATH` | 指定 VM 可执行文件（优先级高于自动寻找与 JADEIGHT_VM） |
+| `--externs PATH` | 外部函数清单（默认 `lib/externs.txt`，JADEIGHT_EXTERNS 次之） |
+| `--lib PATH` | 预加载动态库，可多次（透传给 VM 的 `--lib`） |
+| `--list` | 只列出 byteCode/ 下的 .bc，不运行 |
+| `--stop-on-error` | 遇到失败立即停止（默认跑完所有并汇总） |
+| `--quiet` | 不打印 VM 路径/横幅等提示 |
+| `-h, --help` | 帮助 |
+
+```bash
+./run.sh --list                  # 列出有哪些程序
+./run.sh t1_basic.bc dl_test.bc  # 只跑这两个
+./run.sh --lib ./lib/tp.so final.bc
+```
+
 ## 平台适配（launcher.cpp 的宏）
 
 - `_WIN32`：路径分隔符 `\`、可执行后缀 `.exe`、PATH 分隔符 `;`
@@ -36,18 +55,21 @@
 
 ## 虚拟机自动寻找顺序
 
-1. 环境变量 `JADEIGHT_VM`（最高优先）
+1. `--vm` 参数、环境变量 `JADEIGHT_VM`（最高优先）
 2. `./jadeight_vm`、程序同目录的 `jadeight_vm`
-3. 兄弟工程：`../JadeightCompiler/build/j8run`、`../Jadeight2/cmake-build-debug/Jadeight2`
+3. 兄弟工程：`../JadeightCompiler/build/j8run`、`../Jadeight2/{cmake-build-debug,build,cmake-build-release}/Jadeight2`
    （本机自动命中 `j8run`——唯一接受 `.bc` 路径参数的 VM 运行器；
    Jadeight2 独立二进制 `main()` 不带参数、只跑内置演示，慎用）
 4. `~/jadeight_vm`、`/usr/local/bin`、`/usr/bin`
 5. `PATH` 中的 `jadeight_vm` / `j8run` / `Jadeight2`
 
+找不到时提示先构建 j8run（`cd ../JadeightCompiler && cmake --build build --target j8run -j4`）。
+
 ## 环境变量
 
 - `JADEIGHT_VM` — 指定虚拟机路径，如 `JADEIGHT_VM=/opt/jadeight/jadeight_vm ./run.sh`
 - `JADEIGHT_BC_DIR` — 指定字节码目录（默认 `$PWD/byteCode`）
+- `JADEIGHT_LIB_DIR` — 指定动态库目录（默认 `$PWD/lib`，用于找 externs.txt）
 - `JADEIGHT_EXTERNS` — 指定外部函数清单（默认取 `lib/externs.txt`）
 
 ## 动态链接（字节码自行加载 lib/）
@@ -65,8 +87,9 @@ gcc -shared -fPIC -O2 mylib.c -o lib/libmylib.so   # 动态库放入 lib/
 ./run.sh
 ```
 
-示例：`byteCode/extern_test.bc` + `lib/libextint.so` + `lib/externs.txt`
-（调用 C 函数 `mymul_int`，输出 42 与 500）。
+示例：`byteCode/t1_basic.bc`（纯字节码，无外部依赖）一键运行；
+`lib/externs.txt` 自动以 `--externs` 传给 VM，供字节码里的
+`EXTERN_CALL`/`dl_reg` 注册 `malloc`/`free`/`memcpy`/`dlopen`/`dlsym` 等外部函数。
 
 ## 快速上手（全链路）
 
