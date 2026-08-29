@@ -276,7 +276,7 @@ j8run <main.bc> [--externs manifest.txt] [--lib lib.so]
 
 ## 与其他文档的关系
 
-- **本 VM 是执行者**：执行 [j8c 编译器](../JadeightCompiler)（`04-j8c编译器.md`）编译、[jadeight_asm 汇编器](../JadeightAbstractionCode)（`03-汇编器与字节码格式.md`）汇编出的 `.bc` 字节码。
+- **本 VM 是执行者**：执行 [j8c 编译器](../../JadeightCompiler)（`04-j8c编译器.md`）编译、[jadeight_asm 汇编器](../../JadeightAbstractionCode)（`03-汇编器与字节码格式.md`）汇编出的 `.bc` 字节码。
 - **上游格式约定**：`.bc` 的文件布局（LE 头 `argSize/retSize/entry` + 大端操作数字节码）由汇编层定义，与本 VM `FunctionSave::loadFromFile/saveToFile` 兼容 —— 详见 `03-汇编器与字节码格式.md`。
 - **下游入口**：`j8run` 复用本文件描述的 VM 实现来运行 .bc；`05-JadeightPoject启动器.md` 把"找 VM → 跑 .bc"串成最后一公里。
 - 本文件（`02-Jadeight2虚拟机.md`）是 `01-总体架构.md` 的第二节，聚焦指令集、内存模型、调用约定与 .bc 格式本身。
