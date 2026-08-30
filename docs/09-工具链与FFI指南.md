@@ -114,14 +114,15 @@ j8c: 编译成功
 源码：`JadeightCompiler/runtime/j8run.cpp`。**j8run 不是独立 VM**：它 `#define main jadeight2_vm_main` 后 `#include ../Jadeight2/main.cpp`，直接复用 VM 全量实现（解释语义逐字节一致），并叠加 libffi 外部函数注册。它是**当前唯一可直接运行 `.bc` 路径参数的入口**（Jadeight2 独立二进制 `main()` 不带参数）。
 
 ```
-j8run <main.bc> [--externs manifest.txt] [--lib lib.so]...
+j8run <main.bc> [--externs manifest.txt] [--lib lib.so]... [--threads N]
 ```
 
 | 参数 | 语义 |
 |---|---|
 | `main.bc` | 编译器产出的程序（FunctionSave 文件格式：LE 头 + 指令流） |
-| `--externs f` | 外部函数清单（j8c `-emit-externs` 生成），j8run 用 libffi 注册到 `externFn[]` 表 |
+| `--externs f` | 外部函数清单（j8c `-emit-externs` 生成），j8run 用 libffi 注册到 `externFn[]` 表；清单中的 `tid`/`shared_buf` 由宿主内建注册（见下） |
 | `--lib path` | 额外共享库，**可多次出现**；对每个 extern 按「默认库 → 用户库」顺序查找符号 |
+| `--threads N` | **多线程 SPMD**：N 个线程跑同一份字节码（共享 Manager 与进程堆，每线程独立栈/寄存器）。宿主自动提供 `tid()`（当前线程号 0..N-1）与 `shared_buf()`（128 字节共享缓冲）两个 extern，配合 `atomic_*_u32/u64` 内建做同步（见 07 文档 §11.3.1、`tests/t10_atomic.j8`）。默认 1（单线程 `callFunctionSave`） |
 
 **默认库查找顺序**（`libs = {"", "libc.so.6"}`，然后按出现顺序追加 `--lib`）：
 1. 空串 → `dlsym(RTLD_DEFAULT, name)`（全局作用域）
