@@ -16,8 +16,8 @@ j8c 编译器、j8run 宿主运行器、jasm 汇编器的全部命令行参数�
 
 | 工程 | 路径 | 角色 | 主要产物 | 构建方式 |
 |---|---|---|---|---|
-| **Jadeight2** | `../Jadeight2` | 字节码虚拟机（解释器 + 可选 LLVM JIT） | `Jadeight2` 可执行文件（`main()` 不带参数，只跑内置演示；**不能直接跑 .bc 参数**） | CMake（`find_package(PkgConfig)` 找 libffi，LLVM-15 可选 → JIT） |
-| **JadeightAbstractionCode** | `../JadeightAbstractionCode` | 汇编层：jasm 文本 ↔ 字节码 | `jadeight_asm.hpp`（header-only 库，174 条 opcode）、CLI `jasm` / `jasm_dbg` | CMake `add_executable(JadeightAbstractionCode main.cpp)`；或手工 `g++ -std=c++20 -O2 main.cpp -o jasm` |
+| **Jadeight2** | `../Jadeight2` | 字节码虚拟机（解释器 + 快速模板 JIT） | `Jadeight2` 可执行文件（`main()` 不带参数，只跑内置演示；**不能直接跑 .bc 参数**） | CMake（`find_package(PkgConfig)` 找 libffi；默认不启用 LLVM） |
+| **JadeightAbstractionCode** | `../JadeightAbstractionCode` | 汇编层：jasm 文本 ↔ 字节码 | `jadeight_asm.hpp`（header-only 库，177 条 opcode）、CLI `jasm` / `jasm_dbg` | CMake `add_executable(JadeightAbstractionCode main.cpp)`；或手工 `g++ -std=c++20 -O2 main.cpp -o jasm` |
 | **JadeightCompiler** | `../JadeightCompiler` | 编译器 + 宿主运行器 | `build/j8c`（编译器）、`build/j8run`（宿主运行器） | CMake：j8c = `src/*.cpp`（内嵌 `jadeight_asm.hpp`）；j8run = `runtime/j8run.cpp` + `#include ../Jadeight2/main.cpp`，链接 `ffi dl` |
 | **JadeightPoject** | 本目录 | 启动器：自动找 VM、跑字节码 | `JadeightRunner`（单 exe，由 `launcher.cpp` 编译）、`run.sh` | `./build.sh`：`c++ -std=c++20 -O2 launcher.cpp -o JadeightRunner`（另有 CMake 目标 `JadeightPoject`，构建旧版 `main.cpp` 启动器） |
 
@@ -37,7 +37,7 @@ cmake --build JadeightAbstractionCode/cmake-build-debug
 # 或手工（main.cpp 顶部注释给出的命令）：
 cd JadeightAbstractionCode && g++ -std=c++20 -O2 main.cpp -o jasm
 
-# Jadeight2（VM，需要 libffi；LLVM-15 可选）
+# Jadeight2（VM，需要 libffi；快速模板 JIT 默认启用，不依赖 LLVM）
 cmake -S Jadeight2 -B Jadeight2/cmake-build-debug
 cmake --build Jadeight2/cmake-build-debug
 
@@ -111,10 +111,10 @@ j8c: 编译成功
 
 ## 3. j8run —— 宿主运行器 CLI 完整参考
 
-源码：`JadeightCompiler/runtime/j8run.cpp`。**j8run 不是独立 VM**：它 `#define main jadeight2_vm_main` 后 `#include ../Jadeight2/main.cpp`，直接复用 VM 全量实现（解释语义逐字节一致），并叠加 libffi 外部函数注册。它是**当前唯一可直接运行 `.bc` 路径参数的入口**（Jadeight2 独立二进制 `main()` 不带参数）。
+源码：`JadeightCompiler/runtime/j8run.cpp`。**j8run 不是独立 VM**：它 `#define main jadeight2_vm_main` 后 `#include ../Jadeight2/main.cpp`，直接复用 VM 全量实现（解释/快速 JIT 语义逐字节一致），并叠加 libffi 外部函数注册。它是**当前唯一可直接运行 `.bc` 路径参数的入口**（Jadeight2 独立二进制 `main()` 不带参数）。
 
 ```
-j8run <main.bc> [--externs manifest.txt] [--lib lib.so]... [--threads N]
+j8run <main.bc> [--externs manifest.txt] [--lib lib.so]... [--threads N] [--jit]
 ```
 
 | 参数 | 语义 |
@@ -123,6 +123,7 @@ j8run <main.bc> [--externs manifest.txt] [--lib lib.so]... [--threads N]
 | `--externs f` | 外部函数清单（j8c `-emit-externs` 生成），j8run 用 libffi 注册到 `externFn[]` 表；清单中的 `tid`/`shared_buf` 由宿主内建注册（见下） |
 | `--lib path` | 额外共享库，**可多次出现**；对每个 extern 按「默认库 → 用户库」顺序查找符号 |
 | `--threads N` | **多线程 SPMD**：N 个线程跑同一份字节码（共享 Manager 与进程堆，每线程独立栈/寄存器）。宿主自动提供 `tid()`（当前线程号 0..N-1）与 `shared_buf()`（128 字节共享缓冲）两个 extern，配合 `atomic_*_u32/u64` 内建做同步（见 07 文档 §11.3.1、`tests/t10_atomic.j8`）。默认 1（单线程 `callFunctionSave`） |
+| `--jit` | **快速模板 JIT 执行**：整个 `.bc` 交给 `fastjit::submit` 编译为原生码后直接运行；无 LLVM 依赖。`--threads N` 时每线程直接跑同一原生入口（SPMD）。编译失败时自动退回解释器 |
 
 **默认库查找顺序**（`libs = {"", "libc.so.6"}`，然后按出现顺序追加 `--lib`）：
 1. 空串 → `dlsym(RTLD_DEFAULT, name)`（全局作用域）
@@ -190,7 +191,7 @@ j8run 把清单类型名映射到 libffi 类型：
 
 ## 4. jasm —— 汇编器 CLI 完整参考
 
-源码：`JadeightAbstractionCode/jasm.cpp`（与 `main.cpp` 内容相同，jasm.cpp 为近期恢复的规范源）。核心逻辑在 header-only 的 `jadeight_asm.hpp`（`Assembler` 类 + 174 条 opcode + 标签 + 数值格式 + 伪指令 `.STACK .ARGS .RETS .ENTRY .ENTRYOFF .BYTE .FILL`）。
+源码：`JadeightAbstractionCode/jasm.cpp`（与 `main.cpp` 内容相同，jasm.cpp 为近期恢复的规范源）。核心逻辑在 header-only 的 `jadeight_asm.hpp`（`Assembler` 类 + 177 条 opcode + 标签 + 数值格式 + 伪指令 `.STACK .ARGS .RETS .ENTRY .ENTRYOFF .BYTE .FILL`）。
 
 ```
 jasm input.asm [-o output.bc] [-d] [-v] [-f] [-e]

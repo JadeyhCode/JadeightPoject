@@ -1,12 +1,12 @@
 # Jadeight2 虚拟机（字节码解释器）技术文档
 
-Jadeight2 是 Jadeight 生态的核心字节码虚拟机：一个用 C++20 实现的、追求极致速度的**栈式 + 寄存器混合字节码解释器**（可选 LLVM JIT 将字节码编译为原生码）。它从一份动画软件的附属运行时中独立出来（动画软件停在 v0.03，VM 当时已是 v2.10），如今是 j8c 编译产物与 jadeight_asm 汇编产物的唯一执行者。本 VM 的显著特点是：类型只在编译期确定（每个"运算×类型"组合是独立 opcode）、解释器不做任何越界检查（靠哨兵安全退出）、字节码构造后 mprotect 冻结为只读、经 libffi 原样暴露任意 C 函数。
+Jadeight2 是 Jadeight 生态的核心字节码虚拟机：一个用 C++20 实现的、追求极致速度的**栈式 + 寄存器混合字节码解释器**（内置快速模板 JIT 将字节码编译为原生码）。它从一份动画软件的附属运行时中独立出来（动画软件停在 v0.03，VM 当时已是 v2.10），如今是 j8c 编译产物与 jadeight_asm 汇编产物的唯一执行者。本 VM 的显著特点是：类型只在编译期确定（每个"运算×类型"组合是独立 opcode）、解释器不做任何越界检查（靠哨兵安全退出）、字节码构造后 mprotect 冻结为只读、经 libffi 原样暴露任意 C 函数。
 
 ---
 
 ## 1. 概述与定位
 
-- **形态**：`Jadeight2/main.cpp` 单文件虚拟机（约 3000 行，含解释器、多线程执行器、VM 函数、libffi 外部调用、可选 LLVM JIT、演示程序）。
+- **形态**：`Jadeight2/main.cpp` 单文件虚拟机（约 3200 行，含解释器、多线程执行器、VM 函数、libffi 外部调用、快速模板 JIT、演示程序）。
 - **定位**：字节码解释器（bytecode interpreter），执行 `.bc` 字节码流。类型信息全部硬编码进 opcode，运行期解释器**没有"类型"概念**，只按每条指令自己的 `sizeof(T)` 读写字节。
 - **宿主关系**：`int main()` 本身是一个**不带参数的手写字节码演示程序**；真正运行 `.bc` 文件的入口是 `j8run`（JadeightCompiler/runtime/j8run.cpp，通过 `#define main jadeight2_vm_main` + `#include "main.cpp"` 复用本 VM 的全部实现）。
 
@@ -16,15 +16,15 @@ Jadeight2 是 Jadeight 生态的核心字节码虚拟机：一个用 C++20 实�
 |---|---|
 | 前史 | 本是一份动画软件的附属运行时，后独立成虚拟机；动画软件版本 0.03 时 VM 已是 2.10 |
 | **v2.00 类型全展开** | 移除全部 `memcpy`：字节码取数用模板 `rdBE/wrBE`（大端序手工拼字节，编译期展开）；栈/堆内存用 `loadRaw/storeRaw` 按宽度逐字节读写（对齐安全）；每个 `(运算, 类型)` 组合是独立 opcode（如 `ADD_U32`/`ADD_F64`/`SQRT_F64`），运行期不读任何类型字节；ptr 只能寻址（`ADD_PTR`/`SUB_PTR`，禁止乘除/开方/log，`LEA` 取地址）；两种寻址方式 mode0/mode1；分配器不关心类型（`NEW_ARRAY(size:u64, slotOff:u32)` 按 `uint8_t[]` 分配） |
-| **v3** | REG 寄存器指令族（16 个 64 位寄存器 R0..R15；`MOVI`/`MOV`/`PUSH`/`POP`/`LOAD`/`STORE`）；系统地址 `GET_ADDRS` 与间接跳转 `JMP_IND`；多线程 `executoringHarness` + 原子指令 `ATOMIC_*`（共 10 条）；外部调用 `EXTERN_CALL`（libffi 原样暴露）；VM 函数 `FunctionSave` + `FUNC_CALL`；`MEMCPY` 指令；`collect_externs` 枚举动态链接库函数 |
-| **v4** | LLVM JIT（`JadeightJIT::submit(save*)` → 原生函数指针，O2 + MCJIT，同 save 地址缓存复用）；字节码只读冻结（构造完成后 mprotect 置只读，运行时任何写入触发 SIGSEGV）；`JIT_SUBMIT` 指令（客人程序可自行把任意 save 即时编译成原生函数） |
+| **v2.03** | REG 寄存器指令族（16 个 64 位寄存器 R0..R15；`MOVI`/`MOV`/`PUSH`/`POP`/`LOAD`/`STORE`）；系统地址 `GET_ADDRS` 与间接跳转 `JMP_IND`；多线程 `executoringHarness` + 原子指令 `ATOMIC_*`（共 10 条）；外部调用 `EXTERN_CALL`（libffi 原样暴露）；VM 函数 `FunctionSave` + `FUNC_CALL`；`MEMCPY` 指令；`collect_externs` 枚举动态链接库函数 |
+| **v2.12** | 快速模板 JIT（`JadeightJIT::submit(save*)` → 原生函数指针，微秒级编译，同 save 地址缓存复用）；字节码只读冻结（构造完成后 mprotect 置只读，运行时任何写入触发 SIGSEGV）；`JIT_SUBMIT` 指令（客人程序可自行把任意 save 即时编译成原生函数） |
 
-> 待确认：源码第 155 行有一处"LLVM JIT（v2.10 新增）"的段落标题，与版本史、枚举注释、CMakeLists 中一致的"v4 新增"冲突，疑为早期版本号残留，以 **v4** 为准。
+> 旧的 LLVM MCJIT 后端仍在源码中保留，但仅在 `-DJADEIGHT_WITH_LLVM=ON` 时编译，且运行期不经过 LLVM；默认 JIT 后端是快速模板 JIT（`fastjit.inc`）。
 
 ### 1.2 类型哲学
 
 - 类型只在**编译期（汇编器）**确定：宽度与解释行为全部硬编码进 opcode。
-- `CHAR8/16/32` 与 `U8/U16/U32` 位模式一致（v3 起只有 `COUT` 保留 char，按字符输出）。
+- `CHAR8/16/32` 与 `U8/U16/U32` 位模式一致（v2.03 起只有 `COUT` 保留 char，按字符输出）。
 - `ADD`/`SUB` 只保留 uint + float；`MUL`/`DIV` 覆盖全部 10 种数值类型；`<< & | ~` 只给 uint；`>>` 给 uint（逻辑）和 int（算术）各一套。
 
 ---
@@ -42,7 +42,7 @@ Jadeight2 是 Jadeight 生态的核心字节码虚拟机：一个用 C++20 实�
 | `executoringHarness` | **多线程执行器**：每线程一份独立的 `DataSave`/`executoring`，跑同一份只读字节码，共享同一个 `Manager`（共有指针）。`runThreads(prog, n)` 启动，`join()` 收尾 |
 | `FunctionSave` | **VM 函数对象**（save 类对象，save 一行未改）：内部持有一个 `save`（函数字节码）+ 独立的 `DataSave state` + `executoring engine` + `entry`/`argSize`/`retSize`。可从文件动态加载（`loadFromFile`）或从内存构造；默认构造 = 空函数（仅一条 `END`） |
 | `externFn[256]` | **外部函数表**：`{ffi_cif*, 函数指针}`，宿主用 `ffi_prep_cif` 预生成后登记；`EXTERN_CALL` 直接读它 |
-| `JadeightJIT` | **LLVM JIT**（仅 `JADEIGHT_HAS_LLVM` 时编译，否则为空壳：`submit` 返回 nullptr）。`submit(const save&)` → 原生函数指针，按 save 地址缓存复用 |
+| `JadeightJIT` | **JIT 提交接口**。`submit(const save&)` → 原生函数指针（内部走快速模板 JIT，按字节码地址缓存复用）；旧 LLVM MCJIT 后端仅可选用，默认不编译 |
 
 ### 2.2 解释器执行模型
 
@@ -164,8 +164,11 @@ opcode 为 1 字节（`enum : uint8_t`，取值 0..175）。`REG` 指令族刻�
 | 原子变量 | `ATOMIC_LOAD/STORE/XCHG/CAS/ADD_U32,U64`（161..170，共 10 条） | 1+1+1+8 | 原子变量操作（`std::atomic_ref` + seq_cst，目标需 4/8 字节自然对齐）。LOAD：reg=原子读；STORE：原子写 reg 低 W 位；XCHG：reg↔内存交换，reg=旧值；CAS：弹栈 expected，相等则内存=reg，reg=实际旧值并压 U8 成功标志；ADD：fetch_add，reg=旧值 |
 | 外部调用 | `EXTERN_CALL`（171） | 1+1+4+4 | `(idx:u8, argBaseOff:u32, retOff:u32)`：从全局 externFn 表取 `{ffi_cif, 函数指针}`，把 `Stack[base+argBaseOff]` 起按 arg_types 顺序拆成 avalue[]（先 8 位再 16 位…），原样调用 `ffi_call`，返回值写 `Stack[base+retOff]` |
 | VM 函数 | `FUNC_CALL`（172） | 1+4+4+4 | `(fnPtrOff, argBaseOff, retOff)`：从栈槽读 `FunctionSave*` 并以 argBaseOff 为参数基址、retOff 为返回值地址调用（约定：R15=参数基址、R14=返回值地址） |
-| LLVM JIT | `JIT_SUBMIT`（173） | 1+4+4 | `(fnPtrOff, retOff)`：从栈槽读 `save*`，`JadeightJIT::submit` 即时编译（同地址缓存复用），函数指针写回 retOff（8 字节）；无 LLVM 时返回 nullptr |
+| JIT | `JIT_SUBMIT`（173） | 1+4+4 | `(fnPtrOff, retOff)`：从栈槽读 `save*`，`JadeightJIT::submit` 即时编译（快速模板 JIT，同地址缓存复用），函数指针写回 retOff（8 字节） |
 | 内存拷贝 | `MEMCPY`（174） | 1+1+8+1+8+8 | `(dstMode, dstOff, srcMode, srcOff, size)`：bulk 拷贝，语义同 C memcpy（重叠未定义）；mode0 = `Stack[base+off]` 本身，mode1 = 解引用栈槽指针 |
+| 系统信息 | `GET_SYSTEM`（175） | 1 | 压入 1 个 u64 系统信息：低 16 位=平台（1=Linux 2=Windows 3=macOS 4=BSD 5=Other），次 16 位=架构（1=x86_64 2=arm64 3=riscv64 4=Other） |
+| 动态注册 | `DL_REG`（176） | 1+4+4 | `(fnPtrOff, sigPtrOff)`：运行时注册 C 函数（签名串 `"rettype(argtypes)"`），压入 u32 索引；-1=失败 → 越界退出 |
+| 动态调用 | `DL_CALL`（177） | 1+4+4+4 | `(idxOff, argBaseOff, retOff)`：按运行时索引调 C 函数（其余同 EXTERN_CALL） |
 
 ---
 
@@ -221,13 +224,13 @@ opcode 为 1 字节（`enum : uint8_t`，取值 0..175）。`REG` 指令族刻�
 - `EXTERN_CALL` 只按 `arg_types` 顺序把参数缓冲拆成 `avalue[]`（上限 64 个参数），然后原样调用**原始 `ffi_call`** —— 零封装、不重实现。未注册下标 → 越界退出。
 - 客人程序甚至可以调用 libffi 自身（演示注册了 `ffi_prep_cif`/`ffi_prep_cif_var`/`ffi_call`/`ffi_raw_*`/`ffi_java_*` 等）。
 
-### 6.2 LLVM JIT（可选，宏 `JADEIGHT_HAS_LLVM`）
+### 6.2 快速模板 JIT（默认后端，无 LLVM 依赖）
 
-- CMake 优先用 `llvm-config-15`（含工作区内解压的 `third_party/llvm15` 开发包），退回 `find_package(LLVM 15 CONFIG)`；找不到则 `submit` 返回 nullptr、`JIT_SUBMIT` 对客人程序返回空。
-- `JadeightJIT::submit(const save&)`：逐条 opcode 翻译成 LLVM IR（每指令一个 BasicBlock，跳转目标即块），`PassBuilder` O2 默认流水线优化 + MCJIT 落原生码；**同 save 地址缓存复用**（`cache()[&prog]`），编译一次。
+- 后端文件：`fastjit.inc`（被 `main.cpp` 包含）。CMake 默认不查找 LLVM；旧 LLVM MCJIT 后端仅当显式 `-DJADEIGHT_WITH_LLVM=ON` 时编译，运行期也不经过 LLVM。
+- `JadeightJIT::submit(const save&)`：把 save 的字节码逐条 opcode 翻译成 **x86-64 原生指令**（编译微秒级），同字节码地址缓存复用（`fastjit::submit`），编译一次。
 - 调用约定与 FUNC_CALL 一致：`void fn(uint8_t* argPtr, uint8_t* retPtr, void* manager)`。
-- `EXTERN_CALL`/`FUNC_CALL`/原子/COUT/堆分配等走 `addGlobalMapping` 绑定的运行期辅助（`jitExternCall`、`jit_call_fn`、`jit_atomic_*`、`jit_make_ds`…），行为与解释器逐字节一致。
-- 约束：返回的函数指针只在该 save 存活期间有效（IR 捕获了字节码基址）。
+- 数据栈/作用域栈/寄存器文件预分配在原生栈帧；复杂指令（`EXTERN_CALL`/`FUNC_CALL`/原子/COUT/堆分配等）调用 `main.cpp` 里的运行期辅助，行为与解释器逐字节一致。
+- 约束：返回的函数指针只在该 save 存活期间有效（原生码捕获了字节码基址）。
 - `JIT_SUBMIT` 指令让**客人程序**自行把任意 save 即时编译成原生函数指针。
 
 ### 6.3 dl（动态链接）
@@ -244,7 +247,7 @@ opcode 为 1 字节（`enum : uint8_t`，取值 0..175）。`REG` 指令族刻�
 - 算术/比较/位运算/转换/指针寻址/COUT 输出；
 - REG 寄存器族、GET_ADDRS、JMP_IND、原子指令冒烟测试；
 - EXTERN_CALL（host_mix、libffi 自身、mprotect、dlopen/dlsym/ffi_call 调 strlen、collect_externs）；
-- MEMCPY、FUNC_CALL（动态加载 fn_sum.bc 求和函数）、LLVM JIT 对照运行；
+- MEMCPY、FUNC_CALL（动态加载 fn_sum.bc 求和函数）、快速模板 JIT 对照运行；
 - 字节码只读冻结验证（fork 子进程写冻结页 → SIGSEGV）；
 - JIT_SUBMIT 指令、多线程 harness（4 线程 × 25 次原子自增 = 100）。
 
