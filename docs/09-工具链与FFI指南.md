@@ -6,9 +6,15 @@ j8c 编译器、j8run 宿主运行器、jasm 汇编器的全部命令行参数�
 以及 JadeightRunner 启动器（run.sh）的环境变量与 VM 寻找顺序。
 
 > 信息来源：`JadeightCompiler/src/driver.cpp`、`JadeightCompiler/runtime/j8run.cpp`、
-> `JadeightAbstractionCode/jasm.cpp`（与 `main.cpp` 内容相同）、
-> `JadeightPoject/launcher.cpp`、`run.sh`、三个工程的 `CMakeLists.txt`、
+> `JadeightAbstractionCode/main.cpp` 与 `jadeight_asm.hpp`（ISA v3 汇编器/反汇编器）、
+> `Jadeight2ReWrite/isa.hpp`（ISA v3 **唯一事实源**）与 `Jadeight2ReWrite/jit.hpp`（模板 JIT）、
+> `JadeightPoject/launcher.cpp`、`run.sh`、四个工程的 `CMakeLists.txt`、
 > `JadeightPoject/ffi-test/`（zr3.j8 / cppshim.cpp / README.md），并吸收 [05-JadeightPoject启动器.md](05-JadeightPoject启动器.md)。
+>
+> **状态**：整条工具链已迁移到 **ISA v3**（68 条 opcode；TD 类型参数、全小端、标签跳转、
+> 原生多函数/线程/进程、3 条 JIT 指令）。opcode 与编码的唯一事实源是
+> `Jadeight2ReWrite/isa.hpp`，逐条说明见 [06-指令集参考.md](06-指令集参考.md)；
+> JIT 细节见 [14-JIT.md](14-JIT.md)。本文命令示例均按 v3 的实际构建目录写成，已在本机实测。
 
 ---
 
@@ -16,36 +22,38 @@ j8c 编译器、j8run 宿主运行器、jasm 汇编器的全部命令行参数�
 
 | 工程 | 路径 | 角色 | 主要产物 | 构建方式 |
 |---|---|---|---|---|
-| **Jadeight2** | `../Jadeight2` | 字节码虚拟机（解释器 + 快速模板 JIT） | `Jadeight2` 可执行文件（`main()` 不带参数，只跑内置演示；**不能直接跑 .bc 参数**） | CMake（`find_package(PkgConfig)` 找 libffi；默认不启用 LLVM） |
-| **JadeightAbstractionCode** | `../JadeightAbstractionCode` | 汇编层：jasm 文本 ↔ 字节码 | `jadeight_asm.hpp`（header-only 库，177 条 opcode）、CLI `jasm` / `jasm_dbg` | CMake `add_executable(JadeightAbstractionCode main.cpp)`；或手工 `g++ -std=c++20 -O2 main.cpp -o jasm` |
-| **JadeightCompiler** | `../JadeightCompiler` | 编译器 + 宿主运行器 | `build/j8c`（编译器）、`build/j8run`（宿主运行器） | CMake：j8c = `src/*.cpp`（内嵌 `jadeight_asm.hpp`）；j8run = `runtime/j8run.cpp` + `#include ../Jadeight2/main.cpp`，链接 `ffi dl` |
-| **JadeightPoject** | 本目录 | 启动器：自动找 VM、跑字节码 | `JadeightRunner`（单 exe，由 `launcher.cpp` 编译）、`run.sh` | `./build.sh`：`c++ -std=c++20 -O2 launcher.cpp -o JadeightRunner`（另有 CMake 目标 `JadeightPoject`，构建旧版 `main.cpp` 启动器） |
+| **Jadeight2ReWrite** | `../Jadeight2ReWrite` | ISA v3 虚拟机（解释器 + copy-and-patch 模板 JIT） | `build-isa3/Jadeight2`（**VM 自测 + JIT 基准**；`main()` 不带参数、**不接受 `.bc` 路径参数**） | CMake；`find_package(PkgConfig)` 找 libffi；`add_executable(Jadeight2 Jadeight2.cpp isa.hpp jit.hpp)` |
+| **JadeightAbstractionCode** | `../JadeightAbstractionCode` | 汇编层：jasm 文本 ↔ v3 模块 | `jadeight_asm.hpp`（header-only，ISA v3 汇编器/反汇编器，`#include "isa.hpp"`）、CMake 目标名 **`jasm`** | CMake `add_executable(jasm main.cpp)`；或手工 `g++ -std=c++20 -O2 -I../Jadeight2ReWrite main.cpp -o jasm` |
+| **JadeightCompiler** | `../JadeightCompiler` | 编译器 + 宿主运行器 | `build/j8c`（编译器）、`build/j8run`（宿主运行器） | CMake：j8c = `src/*.cpp`（内嵌 `jadeight_asm.hpp`）；j8run = `runtime/j8run.cpp` + `#include ../Jadeight2ReWrite/Jadeight2.cpp`，链接 `ffi dl Threads` |
+| **JadeightPoject** | 本目录 | 启动器：自动找 VM、跑 `.bc` | `JadeightRunner`（单 exe，由 `launcher.cpp` 编译）、`run.sh`；CMake 目标名 **`JadeightPoject`**，源码同为 `launcher.cpp` | `./build.sh`：`c++ -std=c++20 -O2 launcher.cpp -o JadeightRunner`；CMake 目标的 `cmake_minimum_required` 已从 4.3 降到 **3.22** |
 
-> **JadeightPoject 的 main.cpp 注意**：`JadeightPoject/main.cpp` 是**旧版**启动器（只支持 `JADEIGHT_VM`/`JADEIGHT_BC_DIR`，无 lib/externs 支持）；
-> 现行启动器是 `launcher.cpp`（编译为 `JadeightRunner`）。本机实际使用的二进制由 `build.sh` 产出。
+> **注意**：`JadeightPoject/main.cpp` 已不存在（旧版启动器已删除）；`JadeightRunner`
+> 与 CMake 目标 `JadeightPoject` 都由现行 `launcher.cpp` 编译，行为一致。
 
 ### 构建命令
 
 ```bash
+# Jadeight2ReWrite（ISA v3 VM：自测 + JIT 基准）
+cmake -S Jadeight2ReWrite -B Jadeight2ReWrite/build-isa3
+cmake --build Jadeight2ReWrite/build-isa3          # 产物：build-isa3/Jadeight2
+
+# JadeightAbstractionCode（jasm；CMake 目标名就是 jasm）
+cmake -S JadeightAbstractionCode -B JadeightAbstractionCode/build
+cmake --build JadeightAbstractionCode/build        # 产物：build/jasm
+# 或手工（要能 include 到 ../Jadeight2ReWrite/isa.hpp，故需 -I）：
+cd JadeightAbstractionCode && g++ -std=c++20 -O2 -I../Jadeight2ReWrite main.cpp -o jasm
+
 # JadeightCompiler（j8c + j8run）
 cmake -S JadeightCompiler -B JadeightCompiler/build
-cmake --build JadeightCompiler/build          # 产物：build/j8c、build/j8run
-
-# JadeightAbstractionCode（jasm）
-cmake -S JadeightAbstractionCode -B JadeightAbstractionCode/cmake-build-debug
-cmake --build JadeightAbstractionCode/cmake-build-debug
-# 或手工（main.cpp 顶部注释给出的命令）：
-cd JadeightAbstractionCode && g++ -std=c++20 -O2 main.cpp -o jasm
-
-# Jadeight2（VM，需要 libffi；快速模板 JIT 默认启用，不依赖 LLVM）
-cmake -S Jadeight2 -B Jadeight2/cmake-build-debug
-cmake --build Jadeight2/cmake-build-debug
+cmake --build JadeightCompiler/build               # 产物：build/j8c、build/j8run
 
 # JadeightPoject（JadeightRunner 启动器）
-cd JadeightPoject && ./build.sh
+cd JadeightPoject && ./build.sh                    # → ./JadeightRunner
+# 或 CMake（目标名 JadeightPoject，源码同为 launcher.cpp）
+cmake -S JadeightPoject -B JadeightPoject/build && cmake --build JadeightPoject/build
 ```
 
-数据流：`.j8 源码 → j8c（词法→语法→语义→优化→代码生成 jasm 文本→内嵌汇编器）→ .bc（LE 头 + 指令流）→ j8run / JadeightRunner → 输出`。
+数据流：`.j8 源码 → j8c（词法→语法→语义→优化→代码生成 jasm 文本→内嵌 ISA v3 汇编器）→ .bc（v3 模块：magic "J3BC" + 函数目录 + 码流）→ j8run --jit / JadeightRunner → 输出`。
 
 ---
 
@@ -75,7 +83,7 @@ j8c input.j8 [选项]
 | `input.j8` | 输入源文件 | **必填**（缺省打印 usage 并返回 1） |
 | `-o out.bc` | 输出 `.bc` 路径 | 从输入名推导（去掉扩展名 + `.bc`，如 `prog.j8` → `prog.bc`） |
 | `-S` | 保留生成的 jasm 汇编文本，写到「输出名去扩展名 + `.jasm`」（如 `-o out.bc` → `out.jasm`） | 关 |
-| `-O0` / `-O1` / `-O2` | 优化级别（常量折叠/传播、循环展开、DCE、强度削减） | `-O2`（`common.h` 中 `optLevel = 2`；**注意**：04 文档提示 `-O2` 为实验性/不稳定，实际建议 `-O0`） |
+| `-O0` / `-O1` / `-O2` | 优化级别（常量折叠/传播、循环展开、DCE、强度削减） | `-O2`（`common.h` 中 `optLevel = 2`；`tests/run_tests.sh` 顶部注释仍称 `-O2` 为实验性、`-O0` 为可信基线，但两类级别各 9 项当前均全绿） |
 | `--no-unroll` | 禁用循环展开 | 关 |
 | `--unroll-limit N` | 全展开迭代上限（`optimize.cpp` 中 `n <= limit` 才展开） | 8 |
 | `--no-inline` | 禁用内联（**当前版本无内联实现，仅保留兼容**） | 关 |
@@ -88,7 +96,22 @@ j8c input.j8 [选项]
 
 **解析规则**（driver.cpp）：参数按出现顺序扫描；第一个非选项参数为输入；`-o`/`--unroll-limit`/`--ecs-capacity`/`--stack`/`-emit-externs` 后跟一个值参数。
 
-**管线**：词法 → 语法 → 语义（协议/泛型/ECS 检查）→ 优化 → 代码生成（`codegen.cpp` 产出 jasm 文本）→ **内嵌 `jadeight_asm.hpp` 汇编器当场汇编**（`codegen.cpp` 直接调 `Assembler::assemble()`，无外部进程）→ 写 `.bc`。输出头由 driver 用 `wrLE` 写 12 字节：`argSize`/`retSize`/`entry` 各 u32 **小端**（与 `FunctionSave::loadFromFile` 兼容）。
+**管线**：词法 → 语法 → 语义（协议/泛型/ECS 检查）→ 优化 → 代码生成（`codegen.cpp` 产出 jasm 文本，每个函数用 `.FUNC` 划出）→ **内嵌 `jadeight_asm.hpp` 汇编器当场汇编**（`codegen.cpp` 以 `pureBinary = true` 调 `Assembler::assemble()`，无外部进程，只拿纯码流 + 函数目录）→ driver 用 `jadeight::ModuleImage::serialize()` 拼出 **v3 模块**写盘。
+
+**`.bc` = v3 模块格式**（全小端；定义在 `Jadeight2ReWrite/isa.hpp` 的 `ModuleImage`）：
+
+```
+[0..4)    magic "J3BC"(4B)
+[4..8)    u32 version = 3
+[8..12)   u32 funcCount
+[12..16)  u32 codeSize
+[16..20)  u32 entryFunc        ← 入口**函数下标**（j8c 的 main 不一定是 0 号函数）
+[20..)    funcCount × 20B：{ offset, size, argSize, retSize, entry } 各 u32
+...       codeSize 字节码流（函数首尾相接，标签偏移是函数相对的）
+```
+
+即文件真实大小 = `20 + 20 × funcCount + codeSize`。指令编码、TD、指令长度见
+[06-指令集参考.md](06-指令集参考.md)。
 
 ### 2.2 退出码
 
@@ -97,21 +120,30 @@ j8c input.j8 [选项]
 | 0 | 成功（含 `-h`/`--help`） |
 | 1 | 失败：无输入、无法打开源码、词法/语法/语义/代码生成失败、无法写入输出或清单 |
 
-`-v` 成功时输出示例：
+`-v` 成功时输出示例（本机实测：`j8c tests/t3_functions.j8 -o t3.bc -O0 -S -v`）：
 
 ```
-j8c: 编译成功
-  输出: out.bc (1234 字节, entry=42)
-  函数实例: 3
-  栈大小: 65536 字节
+j8c: v3 模块 19 个函数，入口 #10，码流 5459 字节      ← stderr
+汇编文本: t3.jasm                                    ← stdout（仅 -S 时）
+j8c: 编译成功                                        ← stdout
+  输出: t3.bc (5471 字节, entry=3331)                ← stdout
+  函数实例: 18
+  栈大小: 1048576 字节
   警告: 0
 ```
+
+> **注意 1（输出字节数）**：`输出: ... (N 字节, ...)` 里的 N 是 **`12 + codeSize`** 的旧口径
+> （driver.cpp 仍写 `12 + bc.size()`），**不是文件真实大小**。上例文件真实大小是
+> `20 + 20×19 + 5459 = 5859` 字节。
+> **注意 2（entry 的两层含义）**：`entry=3331` 是 main 在**码流里的绝对偏移**；
+> 模块头里的 `entryFunc` 是**函数下标**（上例 `#10`），由 driver 按「entry 落在哪个函数区间」换算。
+> **注意 3（流）**：`j8c: v3 模块 ...` 走 **stderr**，`汇编文本:`/`输出:`/`编译成功` 走 **stdout**，合并重定向时顺序可能交错。
 
 ---
 
 ## 3. j8run —— 宿主运行器 CLI 完整参考
 
-源码：`JadeightCompiler/runtime/j8run.cpp`。**j8run 不是独立 VM**：它 `#define main jadeight2_vm_main` 后 `#include ../Jadeight2/main.cpp`，直接复用 VM 全量实现（解释/快速 JIT 语义逐字节一致），并叠加 libffi 外部函数注册。它是**当前唯一可直接运行 `.bc` 路径参数的入口**（Jadeight2 独立二进制 `main()` 不带参数）。
+源码：`JadeightCompiler/runtime/j8run.cpp`。**j8run 不是独立 VM**：它 `#define main jadeight2_vm_main` 后 `#include ../../Jadeight2ReWrite/Jadeight2.cpp`（ISA v3 VM 全量：解释器 + 模板 JIT），并叠加 libffi 外部函数注册。它是**当前唯一可直接运行 `.bc` 路径参数的入口**（Jadeight2ReWrite 的 `Jadeight2` 独立二进制 `main()` 不带参数，只跑 VM 自测与 JIT 基准）。
 
 ```
 j8run <main.bc> [--externs manifest.txt] [--lib lib.so]... [--threads N] [--jit]
@@ -119,11 +151,11 @@ j8run <main.bc> [--externs manifest.txt] [--lib lib.so]... [--threads N] [--jit]
 
 | 参数 | 语义 |
 |---|---|
-| `main.bc` | 编译器产出的程序（FunctionSave 文件格式：LE 头 + 指令流） |
-| `--externs f` | 外部函数清单（j8c `-emit-externs` 生成），j8run 用 libffi 注册到 `externFn[]` 表；清单中的 `tid`/`shared_buf` 由宿主内建注册（见下） |
+| `main.bc` | 编译器产出的 **v3 模块**（magic `"J3BC"`：函数目录 + 连续码流；`VM::module.loadFromFile` 载入） |
+| `--externs f` | 外部函数清单（j8c `-emit-externs` 生成），j8run 用 libffi 注册到 `externFn[]` 表；清单中的 `tid`/`shared_buf` 由宿主内建 thunk 注册（见下） |
 | `--lib path` | 额外共享库，**可多次出现**；对每个 extern 按「默认库 → 用户库」顺序查找符号 |
-| `--threads N` | **多线程 SPMD**：N 个线程跑同一份字节码（共享 Manager 与进程堆，每线程独立栈/寄存器）。宿主自动提供 `tid()`（当前线程号 0..N-1）与 `shared_buf()`（128 字节共享缓冲）两个 extern，配合 `atomic_*_u32/u64` 内建做同步（见 07 文档 §11.3.1、`tests/t10_atomic.j8`）。默认 1（单线程 `callFunctionSave`） |
-| `--jit` | **快速模板 JIT 执行**：整个 `.bc` 交给 `fastjit::submit` 编译为原生码后直接运行；无 LLVM 依赖。`--threads N` 时每线程直接跑同一原生入口（SPMD）。编译失败时自动退回解释器 |
+| `--threads N` | **多线程 SPMD**：N 个线程用 `std::thread` 各跑一次 `vm.launch(线程, 入口函数)`，共享同一份模块；宿主自动提供 `tid()`（当前线程号 0..N-1）与 `shared_buf()`（128 字节共享缓冲）两个 extern，配合 `atomic_*` 内建做同步（`tests/t10_atomic.j8` + `tests/t10_atomic.threads`）。`N<=1` 时单线程直接 `vm.launch` |
+| `--jit` | **模板 JIT（copy-and-patch）执行**：先 `vm.jitCompile(入口函数)` 编入口，之后被 `CALL` 到的函数**首次调用时惰性编译**；某函数编译失败（如含 `JMP_IND`）只回退该函数到解释器。无 LLVM 依赖，实现见 `Jadeight2ReWrite/jit.hpp` 与 [14-JIT.md](14-JIT.md)。`--threads N` 时各线程跑同一原生入口（SPMD） |
 
 **默认库查找顺序**（`libs = {"", "libc.so.6"}`，然后按出现顺序追加 `--lib`）：
 1. 空串 → `dlsym(RTLD_DEFAULT, name)`（全局作用域）
@@ -141,17 +173,31 @@ j8run <main.bc> [--externs manifest.txt] [--lib lib.so]... [--threads N] [--jit]
 ```
 
 - `#` 开头或空行跳过；不含 `:` 或 `(`/`)` 的行跳过
-- 参数列表为空表示无参数（`name:ret()`）
-- 示例（`JadeightPoject/lib/externs.txt`）：
+- 参数列表为空表示无参数（`name:ret()`，如 `tid:u32()`）
+- 示例 A：纯 `.j8` 程序（不含任何显式 extern）经 `j8c -emit-externs` 的真实输出——
+  7 个自动注册项一行不少（本机实测 `void main(){print(1);}`）：
 
 ```
-add3i:i32(i32,i32,i32)
 malloc:ptr(u64)
 free:void(ptr)
 memcpy:void(ptr,ptr,u64)
+dlopen:ptr(ptr,i32)
+dlsym:ptr(ptr,ptr)
+tid:u32()
+shared_buf:ptr()
 ```
 
-**行顺序即 extern 表索引**：字节码里 `EXTERN_CALL` 用索引引用 extern，所以**清单必须与编译时 `sema.externs` 顺序一致**（即源码中 extern 声明顺序，自动注册的 malloc/free/memcpy 追加在末尾）——由 `-emit-externs` 生成即可保证，手工编辑清单时不要打乱顺序。
+- 示例 B：仓库里已有的 `JadeightPoject/lib/externs.txt`（手工维护，只列 libc 侧符号，未含 `tid`/`shared_buf`）：
+
+```
+malloc:ptr(u64)
+free:void(ptr)
+memcpy:void(ptr,ptr,u64)
+dlopen:ptr(ptr,i32)
+dlsym:ptr(ptr,ptr)
+```
+
+**行顺序即 extern 表索引**：字节码里 `EXTERN_CALL` 用索引引用 extern，所以**清单必须与编译时 `sema.externs` 顺序一致**（即源码中 extern 声明顺序，自动注册项追加在末尾，顺序固定为 malloc→free→memcpy→dlopen→dlsym→tid→shared_buf）——用 `-emit-externs` 生成即可保证，手工编辑清单时不要打乱顺序。
 
 ### 3.2 支持的类型表（ffiType）
 
@@ -173,25 +219,27 @@ j8run 把清单类型名映射到 libffi 类型：
 >
 > **注意 2（f32）**：j8run 类型表支持 `f32`，但 **j8c 不支持 f32 类型**（编译报错「f32 不支持（v1 只支持 f64），请用 f64」），因此从 `.j8` 正常编译无法产生 f32 的 extern 清单；f32 条目只能出现在手写清单/手写字节码场景。
 >
-> **注意 3（上限）**：VM 侧 `externFn[256]`（`Jadeight2/main.cpp`），j8run 注册循环 `idx < sigs.size() && idx < 256`，**超过 256 个 extern 静默截断**；未注册就被调用的 extern，VM 报 `externFn[idx].cif == nullptr` → 程序异常退出（end=2）。
+> **注意 3（上限）**：VM 侧 `externFn[256]`（`Jadeight2ReWrite/Jadeight2.cpp`），j8run 注册循环 `idx < sigs.size() && idx < 256`，**超过 256 个 extern 静默截断**；未注册就被调用的 extern，VM 见 `externFn[idx].cif == nullptr` → `TRAP`，线程 `state = 2`。
 
 ### 3.3 行为与退出码
 
-- 启动即打印 `===== j8run: <bc路径> =====`，随后依次打印 `j8run: registered extern[N] <名字>`（每成功注册一个 extern）
-- 找不到符号：打印 `extern[N] 'xxx' not found` **继续**（不中止）
-- 加载失败（`bytecode.size == 0`）→ 退出码 1；程序异常退出（`state.end == 2`）→ 退出码 1
+- stdout 会打印 banner `===== j8run: <bc路径> =====`（在**程序自身的输出之前**）。
+- **`--externs` 的注册行也是 stdout，且排在 banner 之前**：每成功注册一个 extern 打印一行 `j8run: registered extern[N] <名字>`（本机实测 `j8run zr3.bc --externs zr3.txt` 会先打 7 行注册信息再打 banner）。因此 `tail -n +2` 只在**不传 `--externs`** 时等于「丢掉 banner」——`tests/run_tests.sh` 正是这种情况；带 `--externs` 时它会丢错行。
+- `J8RUN_VERBOSE=1` 时额外诊断信息走 **stderr**：`j8run: <N> 个函数，解释器|模板 JIT[, SPMD]`，`--jit` 时再加一行 `j8run: JIT 已编译入口函数|入口函数不支持，回退解释器`。
+- 找不到符号：stderr 打印 `extern[N] 'xxx' not found` **继续**（不中止）
+- 加载失败（`vm.module.loadFromFile` 返回 false，例如旧格式文件）→ 退出码 1；线程 `state == 2`（TRAP，如调用了未注册的 extern）→ 退出码 1
 
 | 退出码 | 含义 |
 |---|---|
 | 0 | 正常运行结束 |
-| 1 | 无法加载 `.bc`，或程序异常退出（end=2，如调用了未注册的 extern） |
+| 1 | 无法加载 `.bc`（不是 v3 模块），或线程以 TRAP 结束（state=2） |
 | 2 | 用法错误（未给 `main.bc`） |
 
 ---
 
 ## 4. jasm —— 汇编器 CLI 完整参考
 
-源码：`JadeightAbstractionCode/jasm.cpp`（与 `main.cpp` 内容相同，jasm.cpp 为近期恢复的规范源）。核心逻辑在 header-only 的 `jadeight_asm.hpp`（`Assembler` 类 + 177 条 opcode + 标签 + 数值格式 + 伪指令 `.STACK .ARGS .RETS .ENTRY .ENTRYOFF .BYTE .FILL`）。
+源码：`JadeightAbstractionCode/main.cpp`（CMake 目标名 `jasm`；同目录 `jasm.cpp` 与它只差一行错误信息文本）。核心逻辑在 header-only 的 `jadeight_asm.hpp` / `isa.hpp`（`Assembler` 类 + ISA v3 的 **68 条 opcode** + 标签 + 数值格式 + 伪指令）。
 
 ```
 jasm input.asm [-o output.bc] [-d] [-v] [-f] [-e]
@@ -202,29 +250,62 @@ jasm input.asm [-o output.bc] [-d] [-v] [-f] [-e]
 | `input.asm` | 汇编模式输入 jasm 文本；`-d` 时输入 `.bc` | 必填 |
 | `-d` | **反汇编模式**：输入 `.bc`，输出可读指令清单（到 stdout，或 `-o` 指定文件） | 汇编模式 |
 | `-o 文件` | 输出文件名（反汇编时为输出文本文件） | 输入名去扩展名 + `.bc`（反汇编时默认 stdout） |
-| `-v` | 详细输出：打印汇编行/反汇编结果；成功后打印输出路径、字节数、头部 `argSize/retSize/entry` | 关 |
-| `-f` | 输出**纯字节码**（无 12 字节 FunctionSave 头部） | 带头部 |
-| `-e` / `--le` | 头部按**小端序**读写（与 Jadeight2 VM `FunctionSave::loadFromFile` 兼容） | **大端序**（与自身反汇编回环一致） |
+| `-v` | 详细输出（走 **stderr**）：逐条打印 `[偏移] 原文 (长度)`；成功后打印输出路径、字节数、入口函数的 `argSize/retSize/entry` | 关 |
+| `-f` | 输出**纯码流**（无 v3 模块头，即只有 `codeSize` 字节的码流；j8c 内部走的就是这条路） | 输出完整 v3 模块 |
+| `-e` / `--le` | **兼容开关，v3 下无实际作用**（`Assembler::littleEndianHeader` 字段仍在，但 v3 一律小端） | 无作用 |
 
-**字节序规则**（关键）：头部位序由 `-e` 切换；**指令内部的多字节操作数恒为大端**（`rdBE`/`wrBE`），与头部字节序无关。
+**字节序规则**：v3 **全小端**——模块头、指令操作数、立即数一律小端（`isa.hpp` 的 `Asm`/`ModuleImage` 直接按 LE 拼字节）。`-e` 只是为旧命令行保留的参数，加不加结果相同。
+
+> `-v` 成功时会打印一行 `Header (BE): argSize=... retSize=... entry=...`；这个 `BE`/`LE` 标签是 v2 遗留文案（按 `-e` 是否出现打印 BE/LE），**与 v3 无关**——v3 输出恒为小端模块。该行数字取的是**入口函数**的 `argSize/retSize`（不传 `.ENTRY` 时入口默认 0 号函数）。
+
+**伪指令**（`parseAsmLines` + `assembleModule` 实际支持的全部）：`.FUNC 名 [参数字节] [返回字节]`、`.ARGS n`、`.RETS n`、`.ENTRY <函数名|偏移>`、`.STACK`/`.SCOPE`（接受并忽略，栈由运行时 `STACK_INIT` 决定）、`.BYTE v...`、`.FILL n [v]`。
+
+**汇编语法：助记名 + 类型操作数**（ISA v3 把类型从 opcode 挪进了参数，见 [06-指令集参考.md](06-指令集参考.md)）：
+
+```asm
+.FUNC add3 12 4          ; 函数名、参数字节、返回字节
+  STACK_ALLOC 28         ; 帧：ret+params+locals
+  LOAD u32 R0, 0, 0      ; td, reg, mode, off
+  PUSH_REG u32 R0
+  PUSH_IMM u32 1
+  ADD u32                ; 运算只带一个 TD
+  POP_REG u32 R1
+  STORE u32 R1, 0, 0
+  RET                    ; 取代 v2 的 STACK_PTR_MOVE + JMP_IND
+
+.FUNC main 0 0
+  STACK_INIT 4096 64
+  MOVI u64 R0, 123       ; td, reg, imm
+  CMP LT u32             ; 比较：子操作 LT/LE/EQ/NE/GT/GE + TD
+  BRANCH L1              ; 只有标签跳转（函数相对偏移）
+  JMP L2
+L1:
+L2:
+  CALL add3, 4, 0        ; funcIdx, argBaseOff, retOff
+  CVT u32, f64           ; 源 TD, 目标 TD
+  COUT u32
+  HALT
+```
 
 **退出码**：0 成功；1 失败（缺输入、打不开文件、`-o` 后缺参数、汇编失败、写不出输出）。
 
 ### 4.1 与 j8c 的协作
 
-- **内嵌调用**：j8c 的 `driver.cpp`/`codegen.cpp` 直接 `#include "jadeight_asm.hpp"`，代码生成阶段当场 `Assembler::assemble()` 把 jasm 文本变成字节码——**不需要外部 jasm 进程**。
-- **`-S` 保留 `.jasm`**：j8c `-S` 写出的 `out.jasm` 可人工检查，也可用独立 jasm 再汇编。
-- **头部字节序差异**：j8c 产出的 `.bc` 是 **LE 头**（driver 用 `wrLE`），而独立 jasm **默认写 BE 头**。因此：
-  - 用独立 jasm 汇编给 VM 跑 → **必须加 `-e`**（`jasm prog.jasm -e -o prog.bc`）
-  - 反汇编 j8c 产出的 `.bc` → **必须加 `-d -e`**（`jasm prog.bc -d -e`）
-  - 不带头部的纯字节码（`-f`）反汇编时无此问题。
+- **内嵌调用**：j8c 的 `codegen.cpp` 直接 `#include "jadeight_asm.hpp"`，以 `pureBinary = true` 调 `Assembler::assemble()`，从汇编器取回**纯码流 + 函数目录**（`asmblr.funcs`），再由 driver 用 `ModuleImage::serialize()` 拼成 v3 模块落盘——**不需要外部 jasm 进程**。
+- **`-S` 保留 `.jasm`**：j8c `-S` 写出的 `out.jasm`（文件名取自**输出**名：`-o t3.bc` → `t3.jasm`）可人工检查，也可用独立 jasm 再汇编。
+- **不再有字节序差异**：j8c 与独立 jasm 产的 `.bc` 都是 v3 模块，**直接互换**，不需要任何 `-e`。本机实测：`j8c t3_functions.j8 -S -o t3.bc` 后用 `jasm t3.jasm -o roundtrip.bc` 重汇编，两个文件**逐字节相同**（5859 字节），`j8run roundtrip.bc` 输出与 `.expected` 完全一致。
+- `-f` 输出的纯码流**不带模块头**，`j8run` 无法直接加载（它要求 `"J3BC"` 模块）；`-f` 只用于把码流嵌进别的东西。
 
 ```bash
-# 汇编（VM 兼容：-e 小端头）
-../JadeightAbstractionCode/jasm prog.jasm -e -o prog.bc -v
+# 汇编（默认即产出 VM 可加载的 v3 模块，无需 -e）
+../JadeightAbstractionCode/build/jasm prog.jasm -o prog.bc -v
+../JadeightCompiler/build/j8run prog.bc
 
-# 反汇编 j8c 产物（-e 才能正确读 LE 头）
-../JadeightAbstractionCode/jasm prog.bc -d -e
+# 反汇编 j8c 产物（v3 模块，无需 -e）
+../JadeightAbstractionCode/build/jasm prog.bc -d | head -30
+
+# 只要纯码流（无模块头）
+../JadeightAbstractionCode/build/jasm prog.jasm -f -o prog.code
 ```
 
 ---
@@ -273,17 +354,23 @@ void main() {
 }
 ```
 
-### 5.2 自动注册的 extern：malloc / free / memcpy
+### 5.2 自动注册的 extern（7 个）
 
-即使源码不声明，sema 也会自动注册（`sema.cpp addAutoExtern`，**若用户已显式声明同名 extern 则不重复注册**，用户可覆盖签名）：
+即使源码不声明，sema 也会自动注册（`sema.cpp addAutoExtern`，**若用户已显式声明同名 extern 则不重复注册**，用户可覆盖签名）。顺序固定，且追加在所有用户 extern 之后：
 
 | 名字 | 清单签名 | 说明 |
 |---|---|---|
 | `malloc` | `malloc:ptr(u64)` | 堆分配（`new T[n]` 也走它，codegen `emitNew`） |
 | `free` | `free:void(ptr)` | 堆释放 |
 | `memcpy` | `memcpy:void(ptr,ptr,u64)` | 内存拷贝（参数自动 coerce 为 u64） |
+| `dlopen` | `dlopen:ptr(ptr,i32)` | 运行期动态链接（`dload` 内建调用它，见 §10） |
+| `dlsym` | `dlsym:ptr(ptr,ptr)` | 运行期符号解析 |
+| `tid` | `tid:u32()` | **宿主 extern**（非 libc）：当前线程号 0..N-1，j8run 内置 thunk |
+| `shared_buf` | `shared_buf:ptr()` | **宿主 extern**：128 字节进程内共享缓冲，j8run 内置 thunk |
 
-这三个走 codegen 专用发射路径（`externMemcpy`/`externFree`/`emitNew`），先求值参数到 R4.. 寄存器、再 `SCOPE_PUSH` 压栈（修复过作用域基址 bug，见 §5.7）。由于它们**必然出现在清单里**，即使纯 `.j8` 程序（无 extern 声明）`-emit-externs` 也会输出这三行——j8run 无需额外 `--lib` 即可从 libc（`RTLD_DEFAULT`/`libc.so.6`）解析到它们。
+- `malloc`/`free`/`memcpy` 走 codegen 专用发射路径（`externMemcpy`/`externFree`/`emitNew`），先求值参数到 R4.. 寄存器、再 `SCOPE_PUSH` 压栈（修复过作用域基址 bug，见 §5.7）。
+- `tid`/`shared_buf` 不在任何 .so 里：j8run 的 `hostExtern()` 直接返回宿主 thunk（注册时优先于 dlsym），无 manifest 时 `registerHostExterns()` 也会把它们占位注册进 `externFn[]` 的前两个空槽。
+- 因为 7 项**必然出现在清单里**，即使纯 `.j8` 程序（无 extern 声明）`-emit-externs` 也输出这 7 行（实测见 §3.1 示例 A）；`malloc/free/memcpy/dlopen/dlsym` 由 j8run 从 libc（`RTLD_DEFAULT`/`libc.so.6`）解析，无需额外 `--lib`。
 
 ### 5.3 如何写 C/C++ 库并编译动态库
 
@@ -427,7 +514,7 @@ g++ -shared -fPIC -O2 -std=c++20 cppshim.cpp -o libcppshim.so
 
 **其他已验证**（04 文档 + ffi-test README）：
 - **C++ 标准库**：`std::string`（cpp_find）、`std::map`、`std::sort`、`std::cmath`——实测可通过 FFI 调用；注意当前仓库 `cppshim.cpp` 只含 `cpp_find`（std::string），std::map/std::sort/std::cmath 的封装未随仓库保存（README 记载），如需复现请自行封装（待确认原始封装源码）
-- **libm 直调**：`sqrt`/`pow`/`floor`/`fabs`/`sin`/`cos`（经 `RTLD_DEFAULT`/libc 解析；注意 j8c 内置 `sqrt`/`log` 走 `OP_SQRT_F64`/`OP_LOG_F64` 指令，同名 extern 声明会与内建冲突，需避免）
+- **libm 直调**：`sqrt`/`pow`/`floor`/`fabs`/`sin`/`cos`（经 `RTLD_DEFAULT`/libc 解析；注意 j8c 内置 `sqrt`/`log` 走 ISA v3 的 `SQRT <td>`/`LOG <td>` 指令，同名 extern 声明会与内建冲突，需避免）
 - **zlib**：`compressBound`/`compress2`/`uncompress` 往返（zr3.j8）
 
 ### 5.8 注意事项与已修复的 bug（简述，细节见 [04-j8c编译器.md](04-j8c编译器.md)）
@@ -447,17 +534,32 @@ g++ -shared -fPIC -O2 -std=c++20 cppshim.cpp -o libcppshim.so
 
 ## 6. JadeightRunner 启动器参考（JadeightPoject）
 
-源码：`launcher.cpp`（跨平台单 exe，宏适配 `__APPLE__`/`__linux__`/`_WIN32`）与 `run.sh`（Linux 脚本，行为与 launcher 一致）。作用：自动寻找 VM → 依次运行 `byteCode/*.bc`（按文件名排序）→ 收集 `lib/` 下动态库与 externs 清单传给 VM。
+源码：`launcher.cpp`（跨平台单 exe，宏适配 `__APPLE__`/`__linux__`/`_WIN32`）与 `run.sh`（Linux 脚本）。**两者的参数与环境变量集相同**，但 VM 候选路径列表略有差异（见 §6.3）。作用：自动寻找 VM → 运行 `byteCode/*.bc`（按文件名排序，或只跑命令行指定的 `.bc`）→ 自动发现 `lib/externs.txt` 传给 VM。
 
 ### 6.1 用法
 
 ```bash
-# Linux
-./run.sh
-# Mac / 其他：先构建单 exe
-./build.sh
-./JadeightRunner
+# Linux（脚本）
+./run.sh                                   # 跑 byteCode/ 下全部 .bc
+./run.sh demo.bc                           # 只跑指定的（相对路径按 byteCode/ 解析）
+./run.sh --list                            # 只列出，不运行
+./run.sh --vm ../JadeightCompiler/build/j8run --externs lib/externs.txt --lib ./lib/libmylib.so
+
+# Mac / 其他：先构建单 exe（launcher.cpp）
+./build.sh                                 # → ./JadeightRunner
+./JadeightRunner [--vm PATH] [--externs PATH] [--lib PATH]... [--list] [--stop-on-error] [--quiet] [文件.bc ...]
+# CMake 目标 JadeightPoject 也是同一份 launcher.cpp：
+cmake -S . -B build && cmake --build build && ./build/JadeightPoject
 ```
+
+| 选项 | 语义 |
+|---|---|
+| `--vm PATH` | 指定 VM（优先于环境变量） |
+| `--externs PATH` | 外部函数清单（缺省自动找 `$JADEIGHT_LIB_DIR/externs.txt`） |
+| `--lib PATH` | 预加载动态库，可多次（透传给 VM 的 `--lib`）——启动器**不**自动扫描 `lib/` |
+| `--list` | 只列出 `byteCode/` 下的 `.bc` |
+| `--stop-on-error` | 遇失败立即停止（默认跑完所有并汇总） |
+| `--quiet` | 不打印每条运行的横幅 |
 
 ### 6.2 环境变量
 
@@ -470,28 +572,38 @@ g++ -shared -fPIC -O2 -std=c++20 cppshim.cpp -o libcppshim.so
 
 示例：`JADEIGHT_VM=/opt/jadeight/jadeight_vm JADEIGHT_BC_DIR=build JADEIGHT_LIB_DIR=lib ./run.sh`
 
-### 6.3 VM 寻找顺序（launcher.cpp `findVM` / run.sh `find_vm`，逐级取第一个可执行的）
+### 6.3 VM 寻找顺序（逐级取第一个可执行的）
+
+`launcher.cpp` 的 `findVM()`：
 
 1. **环境变量** `JADEIGHT_VM`（最高优先）
 2. **程序同目录 / 当前目录**：`jadeight_vm`
-3. **兄弟工程**：`../JadeightCompiler/build/j8run`、`../Jadeight2/cmake-build-debug/Jadeight2`（本机自动命中 j8run——唯一接受 `.bc` 路径参数的 VM 运行器；Jadeight2 独立二进制不带参数、只跑内置演示，慎用）
+3. **兄弟工程**（顺序即优先级）：
+   `../JadeightCompiler/build/j8run`（推荐；**唯一接受 `.bc` 路径参数**的入口）
+   → `../Jadeight2ReWrite/build-isa3/Jadeight2`
+   → `../Jadeight2ReWrite/build/Jadeight2`
+   → 历史路径 `../Jadeight2/{cmake-build-debug,build,cmake-build-release}/Jadeight2`
 4. **用户/系统目录**：`~/jadeight_vm`、`/usr/local/bin/jadeight_vm`、`/usr/bin/jadeight_vm`
 5. **PATH** 中的 `jadeight_vm` / `j8run` / `Jadeight2`
 
+`run.sh` 的 `find_vm()` 基本一致，但**少 `../Jadeight2ReWrite/build-isa3/Jadeight2` 这一项**（候选为 `$PWD/jadeight_vm`、脚本同目录的 `jadeight_vm`、`../JadeightCompiler/build/j8run`、`../Jadeight2/cmake-build-debug/Jadeight2`、`../Jadeight2/build/Jadeight2`、用户/系统目录、PATH）。
+
+> 注意：`Jadeight2ReWrite` 的 `Jadeight2` 二进制 `main()` **不带参数、不接受 `.bc` 路径**（只跑内置自测 + JIT 基准）。它出现在候选里只是历史上曾可用；实际运行 `.bc` 必须命中 **j8run**。
+
 ### 6.4 行为与退出码
 
-- 打印找到的 VM 路径 → 收集 `lib/` 下 `.so`/`.dylib`/`.dll`（按文件名排序）→ 打印动态库清单与 externs 清单 → 依次运行 `byteCode/*.bc`：
+- 打印找到的 VM 路径 → 自动发现 externs 清单（`--externs` → `JADEIGHT_EXTERNS` → `$JADEIGHT_LIB_DIR/externs.txt`，存在才传）→ 依次运行 `byteCode/*.bc`（或命令行指定的文件），每个：
   ```
-  <VM> <bc文件> --externs <清单> --lib <lib1> --lib <lib2> ...
+  <VM> <bc文件> [--externs <清单>] [--lib <lib1>] [--lib <lib2>] ...
   ```
-- 任一 `.bc` 运行失败（非 0）则继续跑后续，但整体退出码非 0
+- 任一 `.bc` 运行失败（非 0）则继续跑后续（加 `--stop-on-error` 则立即停），整体退出码非 0
 
 | 退出码 | 含义 |
 |---|---|
 | 0 | 全部成功（或 byteCode 目录为空） |
 | 1 | 至少一个 `.bc` 运行失败 |
-| 2 | 找不到虚拟机 |
-| 3 | 找不到字节码目录 |
+| 2 | 找不到虚拟机 / 未知选项 / 选项缺参数 |
+| 3 | 找不到字节码目录或指定的 `.bc` 文件 |
 
 ### 6.5 启动器全链路示例（extern 场景）
 
@@ -513,7 +625,7 @@ gcc -shared -fPIC -O2 mylib.c -o lib/libmylib.so
 ```bash
 # ========== 0) 构建工具链 ==========
 cmake -S JadeightCompiler -B JadeightCompiler/build && cmake --build JadeightCompiler/build
-cd JadeightAbstractionCode && g++ -std=c++20 -O2 main.cpp -o jasm   # 或 cmake 构建
+cd JadeightAbstractionCode && g++ -std=c++20 -O2 -I../Jadeight2ReWrite main.cpp -o jasm   # 或 cmake 构建
 
 # ========== 1) 写源码 ==========
 # 示意示例（机制与仓库已验证的 zr3.j8 / extern_test / cpp_find 相同，组合本身未单独实测）
@@ -535,42 +647,50 @@ uint64_t strlen_ptr(const char* s)    { return (uint64_t)strlen(s); }
 EOF
 gcc -shared -fPIC -O2 mylib.c -o libmylib.so
 
-# ========== 3) 编译 .j8 → .bc（-S 保留 .jasm；-emit-externs 生成清单） ==========
+# ========== 3) 编译 .j8 → .bc（v3 模块；-S 保留 .jasm；-emit-externs 生成清单） ==========
 ../JadeightCompiler/build/j8c -O0 -S -emit-externs externs.txt -o demo.bc demo.j8
 cat externs.txt
 # mymul_int:i32(i32,i32)
 # strlen_ptr:u64(ptr)
-# malloc:ptr(u64)          ← 自动注册的 extern（即使源码未用也会列出）
+# malloc:ptr(u64)          ← 以下 7 项为自动注册，即使源码未用也会列出
 # free:void(ptr)
 # memcpy:void(ptr,ptr,u64)
+# dlopen:ptr(ptr,i32)
+# dlsym:ptr(ptr,ptr)
+# tid:u32()
+# shared_buf:ptr()
 
-# ========== 4)（可选）人工检查/重汇编 .jasm ==========
-../JadeightAbstractionCode/jasm demo.jasm -d -e | head -30   # 反汇编 j8c 产物（-e：LE 头）
-../JadeightAbstractionCode/jasm demo.jasm -e -o demo2.bc     # 重汇编（-e：VM 兼容 LE 头）
+# ========== 4)（可选）人工检查/重汇编 .jasm（v3 全小端，无需 -e） ==========
+../JadeightAbstractionCode/build/jasm demo.bc -d | head -30      # 反汇编 j8c 产物
+../JadeightAbstractionCode/build/jasm demo.jasm -o demo2.bc      # 重汇编（默认即 v3 模块）
 
-# ========== 5) 运行 ==========
+# ========== 5) 运行（解释器 / 模板 JIT 两条路径） ==========
 ../JadeightCompiler/build/j8run demo.bc --externs externs.txt --lib ./libmylib.so
+../JadeightCompiler/build/j8run demo.bc --externs externs.txt --lib ./libmylib.so --jit
 # 期望输出：42 / 8
 
 # ========== 6) 或用启动器一键运行 ==========
 mkdir -p byteCode lib
 cp demo.bc byteCode/ && cp libmylib.so lib/ && cp externs.txt lib/
-../JadeightPoject/run.sh
+../JadeightPoject/run.sh --lib ./lib/libmylib.so
 ```
 
 **要点回顾**：
-- j8c 产 `.bc` 是 **LE 头**；独立 jasm 默认 **BE 头**——手工汇编/反汇编 j8c 产物都要 `-e`
+- j8c 与独立 jasm 都产 **v3 模块**（全小端，magic `"J3BC"`），可互相替换，**不需要 `-e`**（`-e` 在 v3 下无作用）
 - 清单必须与编译顺序一致，用 `-emit-externs` 生成、不要手改顺序
-- `malloc/free/memcpy` 自动注册，无需声明即可用；纯 `.j8` 程序清单也会包含它们
-- j8run 是当前唯一可直接运行 `.bc` 的入口；Jadeight2 独立二进制与 JadeightPoject/main.cpp（旧版）均不适用
+- 自动注册的 extern 共 **7 个**（`malloc`/`free`/`memcpy`/`dlopen`/`dlsym`/`tid`/`shared_buf`），无需声明即可用；纯 `.j8` 程序清单也会包含它们
+- j8run 是当前唯一可直接运行 `.bc` 的入口；`Jadeight2ReWrite` 的 `Jadeight2` 独立二进制不接受 `.bc` 参数
+- 启动器**不会**自动扫描 `lib/` 下的 `.so`，动态库要用 `--lib` 逐个传（`lib/externs.txt` 才会自动发现）
 
 ---
 
 ## 与其他文档的关系
 
 - 编译器细节（语言、优化器、代码生成、测试）：[04-j8c编译器.md](04-j8c编译器.md)
-- jasm 语法与 .bc 字节码格式：[03-汇编器与字节码格式.md](03-汇编器与字节码格式.md)
-- VM 机制（EXTERN_CALL/libffi、内存模型、调用约定）：[02-Jadeight2虚拟机.md](02-Jadeight2虚拟机.md) 与 [08-VM机制与字节码格式.md](08-VM机制与字节码格式.md)
+- **ISA v3 指令集**（68 条 opcode、TD、编码约定、长度表）与 jasm 语法：[06-指令集参考.md](06-指令集参考.md)
+- **JIT**（copy-and-patch 模板 JIT、`JIT_SUBMIT`/`JIT_COMPILE`/`CALL_NATIVE`、性能）：[14-JIT.md](14-JIT.md)
+- 汇编层与 `.bc` 格式：[03-汇编器与字节码格式.md](03-汇编器与字节码格式.md)（**已随 ISA v3 更新**：68 条 opcode、v3 `"J3BC"` 模块、小端操作数、`jasm -d` 逐字节回环）
+- VM 机制（EXTERN_CALL/libffi、内存模型、调用约定）：[08-VM机制与字节码格式.md](08-VM机制与字节码格式.md) 是 **ISA v3 当前实现**；[02-Jadeight2虚拟机.md](02-Jadeight2虚拟机.md) 是 **v2 旧 VM** 的对照文档，两者不要混读
 - 启动器：[05-JadeightPoject启动器.md](05-JadeightPoject启动器.md)
 - .j8 语言完整手册：[07-语言参考.md](07-语言参考.md)
 
@@ -587,10 +707,11 @@ void main() {
 }
 ```
 - `dload`/`dlopen`/`dlsym` 均为**自动 extern**（j8c 自动注册、j8run 从 libc 解析），无需手写 extern 声明；动态库默认根目录 = `lib/`（`dload` 编译期拼接前缀）
-- 启动器不再 `--lib` 预加载，也不要求库在启动时存在——运行期按需加载
+- 启动器不会自动预加载 `lib/` 下的库，也不要求库在启动时存在——运行期按需加载
+- 指令编码：`DL_REG` = 0x83（13 字节，`fnOff, sigOff, outOff` 三个 u32）、`DL_CALL` = 0x84（13 字节，`idxOff, argBase, retOff`）
 
 - **签名串格式**：`返回类型(参数类型,...)`，类型名 `u8/i8/u16/i16/u32/i32/u64/i64/f32/f64/ptr/void`（.j8 侧无 f32，用 f64）
 - `dl_call` 的签名串在**编译期**决定参数/返回值布局（编译器解析字面量）；`dl_reg` 的签名串在**运行期**由 VM 解析生成 ffi_cif——两处必须一致
 - 已注册索引可复用：同一函数只需 dl_reg 一次，dl_call 多次
 - 实测：运行期 dlopen 加载 .so，dlsym 取 tp_add/tp_mul/tp_echo/tp_neg，dl_call 返回 42 / 7.000 / 123456789 / -7 全对
-- 配套：GET_SYSTEM 指令（175）可在字节码内判断平台后选择加载哪套库
+- 配套：`GET_SYSTEM` 指令（ISA v3 的 0x81，v2 时代编号 175）可在字节码内判断平台后选择加载哪套库

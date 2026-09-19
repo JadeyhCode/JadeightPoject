@@ -20,17 +20,26 @@ Jadeight 生态（虚拟机 + 汇编层 + 编译器 + 启动器 + 游戏 + 教�
 
 | 文档 | 内容 |
 |---|---|
-| [02-Jadeight2虚拟机.md](docs/02-Jadeight2虚拟机.md) | 虚拟机：指令集、内存模型、调用约定、.bc 格式 |
-| [03-汇编器与字节码格式.md](docs/03-汇编器与字节码格式.md) | 汇编层：jadeight_asm API、jasm 语法、.bc 布局 |
+| [02-Jadeight2虚拟机.md](docs/02-Jadeight2虚拟机.md) | 虚拟机：指令集、内存模型、帧栈调用约定、v3 模块格式 |
+| [03-汇编器与字节码格式.md](docs/03-汇编器与字节码格式.md) | 汇编层：jadeight_asm API、jasm 语法（ISA v3）、.bc 布局 |
 | [04-j8c编译器.md](docs/04-j8c编译器.md) | 编译器：语言要点、优化器、代码生成、测试 |
 
-深度参考（06–09）：
+深度参考（06–09、14）：
 
 | 文档 | 内容 |
 |---|---|
-| [06-指令集参考.md](docs/06-指令集参考.md) | 全部 177 条 opcode：编号、编码、jasm 写法、语义 |
+| [06-指令集参考.md](docs/06-指令集参考.md) | **全部 68 条 opcode（ISA v3）**：编号、编码、类型参数、jasm 写法、语义 |
 | [07-语言参考.md](docs/07-语言参考.md) | .j8 语言完整手册：词法、类型、语句、函数、协议、泛型、ECS |
-| [08-VM机制与字节码格式.md](docs/08-VM机制与字节码格式.md) | .bc 逐字节格式、内存模型、执行循环、调用约定、JIT、多线程 |
+| [08-VM机制与字节码格式.md](docs/08-VM机制与字节码格式.md) | v3 模块逐字节格式、内存模型、执行循环、帧栈调用约定、多线程/多进程 |
 | [09-工具链与FFI指南.md](docs/09-工具链与FFI指南.md) | j8c/j8run/jasm 全部参数、extern/FFI 完整指南 |
+| [14-JIT.md](docs/14-JIT.md) | copy-and-patch JIT：模板与重定位、三条 JIT 指令、寄存器约定、性能与限制 |
 
-数据流：`.j8` →（j8c）→ `.jasm` →（jadeight_asm）→ `.bc` →（Jadeight2 VM）→ 输出。
+数据流：
+
+```
+.j8   --j8c-->   .bc（v3 模块 "J3BC"）  --j8run / 启动器-->  VM（解释器 或 --jit）
+.jasm --jasm-->  .bc                    --jasm -d-->        .jasm
+```
+
+ISA 的唯一事实源是 `Jadeight2ReWrite/isa.hpp`；模块格式为全小端的 `"J3BC"` v3 模块
+（头 + 函数目录 + 码流），调用走每线程帧栈，多线程用 `std::thread`、多进程用 `fork()`。

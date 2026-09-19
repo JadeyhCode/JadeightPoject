@@ -95,7 +95,12 @@ static std::string findVM(const std::string& exeDir, const std::string& cwd) {
     cands.push_back(exeDir + PATH_SEP_S + vm);
     cands.push_back(cwd + PATH_SEP_S + vm);
     // 3) 兄弟工程（本机已知可运行 .bc 的 VM 运行器，覆盖常见构建产物位置）
+    //    j8run 是 ISA v3 的宿主运行器（推荐）；下面几个是历史 VM 产物
     cands.push_back(exeDir + PATH_SEP_S + ".." + PATH_SEP_S + "JadeightCompiler" + PATH_SEP_S + "build" + PATH_SEP_S + "j8run" EXE_SUFFIX);
+    cands.push_back(cwd + PATH_SEP_S + ".." + PATH_SEP_S + "JadeightCompiler" + PATH_SEP_S + "build" + PATH_SEP_S + "j8run" EXE_SUFFIX);
+    //    ISA v3 独立 VM（Jadeight2ReWrite，自带自测；接受 .bc 的方式见 build-isa3）
+    cands.push_back(exeDir + PATH_SEP_S + ".." + PATH_SEP_S + "Jadeight2ReWrite" + PATH_SEP_S + "build-isa3" + PATH_SEP_S + "Jadeight2" EXE_SUFFIX);
+    cands.push_back(exeDir + PATH_SEP_S + ".." + PATH_SEP_S + "Jadeight2ReWrite" + PATH_SEP_S + "build" + PATH_SEP_S + "Jadeight2" EXE_SUFFIX);
     cands.push_back(exeDir + PATH_SEP_S + ".." + PATH_SEP_S + "Jadeight2" + PATH_SEP_S + "cmake-build-debug" + PATH_SEP_S + "Jadeight2" EXE_SUFFIX);
     cands.push_back(exeDir + PATH_SEP_S + ".." + PATH_SEP_S + "Jadeight2" + PATH_SEP_S + "build" + PATH_SEP_S + "Jadeight2" EXE_SUFFIX);
     cands.push_back(exeDir + PATH_SEP_S + ".." + PATH_SEP_S + "Jadeight2" + PATH_SEP_S + "cmake-build-release" + PATH_SEP_S + "Jadeight2" EXE_SUFFIX);
